@@ -3,6 +3,7 @@
 mod animation;
 mod backend;
 mod border;
+mod cursor;
 mod focus;
 mod grabs;
 mod handlers;

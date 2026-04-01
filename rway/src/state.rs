@@ -5,7 +5,7 @@ use std::{collections::HashMap, ffi::OsString, sync::Arc};
 
 use smithay::{
     desktop::{layer_map_for_output, PopupManager, Space, Window, WindowSurfaceType},
-    input::{Seat, SeatState},
+    input::{pointer::CursorImageStatus, Seat, SeatState},
     reexports::{
         calloop::{generic::Generic, EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction},
         wayland_server::{
@@ -71,6 +71,9 @@ pub struct RwayState {
 
     // 动画管理器
     pub animations: AnimationManager,
+
+    // 光标状态（由客户端通过 SeatHandler::cursor_image 回调更新）
+    pub cursor_status: CursorImageStatus,
 
     // 配置
     pub config: rway_config::Config,
@@ -190,6 +193,8 @@ impl RwayState {
             output_node: None,
 
             animations,
+
+            cursor_status: CursorImageStatus::default_named(),
 
             loop_handle,
 

@@ -15,6 +15,8 @@ use smithay::{
     utils::{Rectangle, Scale, Transform},
 };
 
+use smithay::input::pointer::CursorImageStatus;
+
 use crate::{border::{window_borders, BorderConfig}, state::RwayState};
 
 /// 初始化 Winit 后端：创建窗口、输出、损坏跟踪器，并注册到事件循环
@@ -106,7 +108,7 @@ pub fn init_winit(
                         // 为每个已映射窗口生成边框渲染元素（位于 custom_elements 层，绘制在窗口下方）
                         // custom_elements 先于 space 元素渲染（z-order 最低），因此边框会被窗口内容遮盖。
                         // 由于边框绘制在窗口外侧（负偏移），不会与窗口内容重叠，效果正确。
-                        let border_elements: Vec<_> = state
+                        let mut custom_elements: Vec<_> = state
                             .space
                             .elements()
                             .flat_map(|window| {
@@ -133,7 +135,17 @@ pub fn init_winit(
                             })
                             .collect();
 
-                        // 绑定帧缓冲区并渲染（边框作为 custom_elements 最先绘制）
+                        // 生成光标渲染元素（白色 8x8 方块，z-order 最高）
+                        if !matches!(state.cursor_status, CursorImageStatus::Hidden) {
+                            if let Some(pointer) = state.seat.get_pointer() {
+                                let pos = pointer.current_location();
+                                let cursor_element =
+                                    crate::cursor::cursor_square_element(pos, scale);
+                                custom_elements.push(cursor_element);
+                            }
+                        }
+
+                        // 绑定帧缓冲区并渲染（边框作为 custom_elements 最先绘制，光标在最后 = z-order 最高）
                         let (renderer, mut framebuffer) = backend.bind().unwrap();
                         smithay::desktop::space::render_output::<
                             _,
@@ -147,7 +159,7 @@ pub fn init_winit(
                             1.0,
                             0,
                             [&state.space],
-                            &border_elements,
+                            &custom_elements,
                             &mut damage_tracker,
                             [0.1, 0.1, 0.1, 1.0], // 深灰色背景
                         )
