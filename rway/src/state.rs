@@ -7,7 +7,7 @@ use smithay::{
     desktop::{layer_map_for_output, PopupManager, Space, Window, WindowSurfaceType},
     input::{Seat, SeatState},
     reexports::{
-        calloop::{generic::Generic, EventLoop, Interest, LoopSignal, Mode, PostAction},
+        calloop::{generic::Generic, EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction},
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::wl_surface::WlSurface,
@@ -63,13 +63,29 @@ pub struct RwayState {
     // 配置
     pub config: rway_config::Config,
 
+    // 事件循环句柄（用于调度空闲回调和定时器）
+    pub loop_handle: LoopHandle<'static, RwayState>,
+
     // IPC
     pub ipc_server: Option<rway_ipc::IpcServer>,
+
+    // Udev 后端数据（仅在 udev feature 启用时使用）
+    #[cfg(feature = "udev")]
+    pub udev_data: Option<crate::backend::udev::UdevData>,
 }
 
 impl RwayState {
-    /// 创建新的 RwayState，初始化所有 Smithay 协议状态
-    pub fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> Self {
+    /// 创建新的 RwayState，初始化所有 Smithay 协议状态（使用默认 seat 名称 "winit"）
+    pub fn new(event_loop: &mut EventLoop<'static, Self>, display: Display<Self>) -> Self {
+        Self::new_with_seat_name(event_loop, display, "winit")
+    }
+
+    /// 创建新的 RwayState，使用指定的 seat 名称
+    pub fn new_with_seat_name(
+        event_loop: &mut EventLoop<'static, Self>,
+        display: Display<Self>,
+        seat_name: &str,
+    ) -> Self {
         let start_time = std::time::Instant::now();
 
         let dh = display.handle();
@@ -94,7 +110,7 @@ impl RwayState {
 
         // Seat：键盘、指针、触摸设备的逻辑组合
         let mut seat_state = SeatState::new();
-        let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
+        let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, seat_name);
 
         // 键盘：默认使用 Dvorak 布局
         let xkb_config = smithay::input::keyboard::XkbConfig {
@@ -113,6 +129,9 @@ impl RwayState {
 
         // 事件循环停止信号
         let loop_signal = event_loop.get_signal();
+
+        // 事件循环句柄
+        let loop_handle = event_loop.handle();
 
         // 初始化平铺引擎
         let tiling = Tree::new();
@@ -147,16 +166,26 @@ impl RwayState {
             next_window_id: 1,
             output_node: None,
 
+            loop_handle,
+
             config,
             ipc_server,
+
+            #[cfg(feature = "udev")]
+            udev_data: None,
         }
     }
 
-    /// 在 winit 输出创建后调用，在平铺树中注册输出和默认工作区
+    /// 在输出创建后调用，在平铺树中注册输出和默认工作区
     pub fn init_tiling_output(&mut self, width: i32, height: i32) {
+        self.init_tiling_output_named("default", width, height);
+    }
+
+    /// 在输出创建后调用，使用指定名称在平铺树中注册输出和默认工作区
+    pub fn init_tiling_output_named(&mut self, name: &str, width: i32, height: i32) {
         let output_id = workspace::add_output(
             &mut self.tiling,
-            "winit",
+            name,
             Rect::new(0, 0, width, height),
         );
         self.output_node = Some(output_id);

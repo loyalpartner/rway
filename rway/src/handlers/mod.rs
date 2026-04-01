@@ -37,13 +37,11 @@ impl SeatHandler for RwayState {
         _seat: &Seat<Self>,
         _image: smithay::input::pointer::CursorImageStatus,
     ) {
-        // 暂不处理光标图像变更（嵌套合成器使用宿主光标）
     }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
         let dh = &self.display_handle;
         let client = focused.and_then(|s| dh.get_client(s.id()).ok());
-        // 将数据设备焦点同步到当前键盘焦点所属的客户端
         set_data_device_focus(dh, seat, client);
     }
 }
