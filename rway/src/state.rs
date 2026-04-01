@@ -390,9 +390,13 @@ impl RwayState {
         id
     }
 
+    /// 内置默认配置（编译时嵌入 config/default 文件）
+    const DEFAULT_CONFIG: &'static str = include_str!("../../config/default");
+
     /// 加载配置文件
+    ///
+    /// 优先级: ~/.config/rway/config → ~/.config/sway/config → 内置默认配置
     pub fn load_config() -> rway_config::Config {
-        // 依次尝试: $XDG_CONFIG_HOME/rway/config -> ~/.config/rway/config -> ~/.config/sway/config
         let config_paths = [
             dirs_config_path("rway/config"),
             dirs_config_path("sway/config"),
@@ -401,16 +405,8 @@ impl RwayState {
         for path in config_paths.into_iter().flatten() {
             if path.exists() {
                 match rway_config::parse_file(&path) {
-                    Ok(mut config) => {
+                    Ok(config) => {
                         tracing::info!("已加载配置: {:?}", path);
-                        // 如果配置文件没有快捷键（比如使用了不支持的 include 指令），
-                        // 合入默认快捷键以保证基本可用性
-                        if config.keybindings.is_empty() {
-                            tracing::warn!(
-                                "配置文件未定义任何快捷键（可能使用了 include 指令，暂不支持），使用内置默认快捷键"
-                            );
-                            config.keybindings = rway_config::Config::with_defaults().keybindings;
-                        }
                         tracing::info!("已加载 {} 个快捷键", config.keybindings.len());
                         return config;
                     }
@@ -421,8 +417,18 @@ impl RwayState {
             }
         }
 
-        tracing::info!("使用默认配置（含内置快捷键）");
-        rway_config::Config::with_defaults()
+        // 所有外部配置文件都不存在或解析失败，使用内置默认配置
+        tracing::info!("使用内置默认配置");
+        match rway_config::parse(Self::DEFAULT_CONFIG) {
+            Ok(config) => {
+                tracing::info!("已加载 {} 个快捷键（内置默认）", config.keybindings.len());
+                config
+            }
+            Err(e) => {
+                tracing::error!("内置默认配置解析失败（这不应该发生）: {}", e);
+                rway_config::Config::default()
+            }
+        }
     }
 
     /// 启动 IPC 服务器
