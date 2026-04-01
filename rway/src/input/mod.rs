@@ -5,7 +5,7 @@ pub mod keybindings;
 use smithay::{
     backend::input::{
         AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
-        KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+        KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
     },
     input::{
         keyboard::FilterResult,
@@ -67,8 +67,38 @@ impl RwayState {
                 );
             }
 
-            InputEvent::PointerMotion { .. } => {
-                // 嵌套合成器（winit）只产生绝对位置事件，忽略相对移动
+            InputEvent::PointerMotion { event, .. } => {
+                let pointer = self.seat.get_pointer().unwrap();
+                let current = pointer.current_location();
+
+                // 相对移动：累加到当前位置，并 clamp 到输出范围
+                let mut new_pos = current + event.delta();
+
+                // 限制在所有输出的联合几何范围内
+                if let Some(output) = self.space.outputs().next() {
+                    if let Some(geo) = self.space.output_geometry(output) {
+                        new_pos.x = new_pos
+                            .x
+                            .clamp(geo.loc.x as f64, (geo.loc.x + geo.size.w) as f64 - 1.0);
+                        new_pos.y = new_pos
+                            .y
+                            .clamp(geo.loc.y as f64, (geo.loc.y + geo.size.h) as f64 - 1.0);
+                    }
+                }
+
+                let serial = SERIAL_COUNTER.next_serial();
+                let under = self.surface_under(new_pos);
+
+                pointer.motion(
+                    self,
+                    under,
+                    &MotionEvent {
+                        location: new_pos,
+                        serial,
+                        time: event.time_msec(),
+                    },
+                );
+                pointer.frame(self);
             }
 
             InputEvent::PointerMotionAbsolute { event, .. } => {
@@ -147,12 +177,12 @@ impl RwayState {
             InputEvent::PointerAxis { event, .. } => {
                 let source = event.source();
 
-                let horizontal_amount = event
-                    .amount(Axis::Horizontal)
-                    .unwrap_or_else(|| event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.0);
-                let vertical_amount = event
-                    .amount(Axis::Vertical)
-                    .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0);
+                let horizontal_amount = event.amount(Axis::Horizontal).unwrap_or_else(|| {
+                    event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.0
+                });
+                let vertical_amount = event.amount(Axis::Vertical).unwrap_or_else(|| {
+                    event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0
+                });
                 let horizontal_amount_discrete = event.amount_v120(Axis::Horizontal);
                 let vertical_amount_discrete = event.amount_v120(Axis::Vertical);
 

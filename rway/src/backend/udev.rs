@@ -63,9 +63,7 @@ use smithay::{
     },
     utils::{DeviceFd, Logical, Monotonic, Point, Scale, Time, Transform},
     wayland::{
-        dmabuf::{
-            DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier,
-        },
+        dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         presentation::Refresh,
     },
 };
@@ -252,13 +250,12 @@ pub fn run_udev() {
     info!("使用 {} 作为主 GPU", primary_gpu);
 
     // ── 3. 创建 GpuManager ──
-    let gpus =
-        GpuManager::new(GbmGlesBackend::with_factory(|display: &EGLDisplay| {
-            let context = EGLContext::new_with_priority(display, ContextPriority::High)?;
-            let capabilities = unsafe { GlesRenderer::supported_capabilities(&context)? };
-            Ok(unsafe { GlesRenderer::with_capabilities(context, capabilities)? })
-        }))
-        .unwrap();
+    let gpus = GpuManager::new(GbmGlesBackend::with_factory(|display: &EGLDisplay| {
+        let context = EGLContext::new_with_priority(display, ContextPriority::High)?;
+        let capabilities = unsafe { GlesRenderer::supported_capabilities(&context)? };
+        Ok(unsafe { GlesRenderer::with_capabilities(context, capabilities)? })
+    }))
+    .unwrap();
 
     // ── 4. 创建 UdevData ──
     let udev_data = UdevData {
@@ -272,11 +269,7 @@ pub fn run_udev() {
     };
 
     // ── 5. 创建 RwayState（使用 seat 名称） ──
-    let mut state = RwayState::new_with_seat_name(
-        &mut event_loop,
-        display,
-        &seat_name,
-    );
+    let mut state = RwayState::new_with_seat_name(&mut event_loop, display, &seat_name);
     state.udev_data = Some(udev_data);
 
     let handle = event_loop.handle();
@@ -291,49 +284,44 @@ pub fn run_udev() {
     };
 
     // ── 7. 初始化 libinput ──
-    let mut libinput_context =
-        Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(
-            state
-                .udev_data
-                .as_ref()
-                .unwrap()
-                .session
-                .clone()
-                .into(),
-        );
+    let mut libinput_context = Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(
+        state.udev_data.as_ref().unwrap().session.clone().into(),
+    );
     libinput_context.udev_assign_seat(&seat_name).unwrap();
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
 
     // 注册 libinput 事件源
     handle
-        .insert_source(libinput_backend, move |mut event, _, state: &mut RwayState| {
-            if let InputEvent::DeviceAdded { device } = &mut event {
-                if device.has_capability(DeviceCapability::Keyboard) {
-                    if let Some(led_state) =
-                        state.seat.get_keyboard().map(|kb| kb.led_state())
-                    {
-                        device.led_update(led_state.into());
+        .insert_source(
+            libinput_backend,
+            move |mut event, _, state: &mut RwayState| {
+                if let InputEvent::DeviceAdded { device } = &mut event {
+                    if device.has_capability(DeviceCapability::Keyboard) {
+                        if let Some(led_state) = state.seat.get_keyboard().map(|kb| kb.led_state())
+                        {
+                            device.led_update(led_state.into());
+                        }
+                        state
+                            .udev_data
+                            .as_mut()
+                            .unwrap()
+                            .keyboards
+                            .push(device.clone());
                     }
-                    state
-                        .udev_data
-                        .as_mut()
-                        .unwrap()
-                        .keyboards
-                        .push(device.clone());
+                } else if let InputEvent::DeviceRemoved { ref device } = event {
+                    if device.has_capability(DeviceCapability::Keyboard) {
+                        state
+                            .udev_data
+                            .as_mut()
+                            .unwrap()
+                            .keyboards
+                            .retain(|item| item != device);
+                    }
                 }
-            } else if let InputEvent::DeviceRemoved { ref device } = event {
-                if device.has_capability(DeviceCapability::Keyboard) {
-                    state
-                        .udev_data
-                        .as_mut()
-                        .unwrap()
-                        .keyboards
-                        .retain(|item| item != device);
-                }
-            }
 
-            state.process_input_event(event);
-        })
+                state.process_input_event(event);
+            },
+        )
         .unwrap();
 
     // ── 8. 注册会话通知（VT 切换） ──
@@ -438,10 +426,9 @@ pub fn run_udev() {
         let udev = state.udev_data.as_mut().unwrap();
         let renderer = udev.gpus.single_renderer(&primary_gpu).unwrap();
         let dmabuf_formats = renderer.dmabuf_formats();
-        let default_feedback =
-            DmabufFeedbackBuilder::new(primary_gpu.dev_id(), dmabuf_formats)
-                .build()
-                .unwrap();
+        let default_feedback = DmabufFeedbackBuilder::new(primary_gpu.dev_id(), dmabuf_formats)
+            .build()
+            .unwrap();
         let mut dmabuf_state = DmabufState::new();
         let global = dmabuf_state
             .create_global_with_default_feedback::<RwayState>(&display_handle, &default_feedback);
@@ -549,14 +536,17 @@ fn device_added(
     // 尝试初始化 GPU（获取 EGL 渲染节点）
     let render_node = {
         let mut try_init = || -> Result<DrmNode, DeviceAddError> {
-            let display =
-                unsafe { EGLDisplay::new(gbm.clone()).map_err(DeviceAddError::AddNode)? };
+            let display = unsafe { EGLDisplay::new(gbm.clone()).map_err(DeviceAddError::AddNode)? };
             let egl_device =
                 EGLDevice::device_for_display(&display).map_err(DeviceAddError::AddNode)?;
             if egl_device.is_software() {
                 return Err(DeviceAddError::NoRenderNode);
             }
-            let rn = egl_device.try_get_render_node().ok().flatten().unwrap_or(node);
+            let rn = egl_device
+                .try_get_render_node()
+                .ok()
+                .flatten()
+                .unwrap_or(node);
             udev.gpus
                 .as_mut()
                 .add_node(rn, gbm.clone())
@@ -585,8 +575,7 @@ fn device_added(
         })
         .ok_or(DeviceAddError::PrimaryGpuMissing)?;
 
-    let framebuffer_exporter =
-        GbmFramebufferExporter::new(gbm.clone(), render_node.into());
+    let framebuffer_exporter = GbmFramebufferExporter::new(gbm.clone(), render_node.into());
 
     let color_formats = if std::env::var("RWAY_DISABLE_10BIT").is_ok() {
         SUPPORTED_FORMATS_8BIT_ONLY
@@ -767,12 +756,9 @@ fn connector_connected(
     let global = output.create_global::<RwayState>(&state.display_handle);
 
     // 计算输出位置（水平排列）
-    let x = state
-        .space
-        .outputs()
-        .fold(0, |acc, o| {
-            acc + state.space.output_geometry(o).unwrap().size.w
-        });
+    let x = state.space.outputs().fold(0, |acc, o| {
+        acc + state.space.output_geometry(o).unwrap().size.w
+    });
     let position = (x, 0).into();
 
     output.set_preferred(wl_mode);
@@ -821,10 +807,7 @@ fn connector_connected(
 
     info!(
         "输出 {} 已就绪（{}x{} @ {}mHz）",
-        output_name,
-        wl_mode.size.w,
-        wl_mode.size.h,
-        wl_mode.refresh
+        output_name, wl_mode.size.w, wl_mode.size.h, wl_mode.refresh
     );
 
     // 初始化平铺树中的输出
@@ -944,17 +927,26 @@ fn frame_finish(
                 | wp_presentation_feedback::Kind::HwCompletion,
         )
     } else {
-        (Time::<Monotonic>::from(Duration::ZERO), wp_presentation_feedback::Kind::Vsync)
+        (
+            Time::<Monotonic>::from(Duration::ZERO),
+            wp_presentation_feedback::Kind::Vsync,
+        )
     };
 
     // VBlank 节流：防止显示器运行过快
-    let Some(udev) = state.udev_data.as_mut() else { return; };
-    let Some(device) = udev.backends.get_mut(&dev_id) else { return; };
-    let Some(surface) = device.surfaces.get_mut(&crtc) else { return; };
+    let Some(udev) = state.udev_data.as_mut() else {
+        return;
+    };
+    let Some(device) = udev.backends.get_mut(&dev_id) else {
+        return;
+    };
+    let Some(surface) = device.surfaces.get_mut(&crtc) else {
+        return;
+    };
 
-    let vblank_remaining = surface.last_presentation_time.map(|last| {
-        frame_duration.saturating_sub(Time::elapsed(&last, clock))
-    });
+    let vblank_remaining = surface
+        .last_presentation_time
+        .map(|last| frame_duration.saturating_sub(Time::elapsed(&last, clock)));
 
     if let Some(remaining) = vblank_remaining {
         if remaining > frame_duration / 2 {
@@ -971,13 +963,10 @@ fn frame_finish(
             };
             let timer_token = state
                 .loop_handle
-                .insert_source(
-                    Timer::from_duration(remaining),
-                    move |_, _, state| {
-                        frame_finish(state, dev_id, crtc, &mut Some(throttled_metadata));
-                        TimeoutAction::Drop
-                    },
-                )
+                .insert_source(Timer::from_duration(remaining), move |_, _, state| {
+                    frame_finish(state, dev_id, crtc, &mut Some(throttled_metadata));
+                    TimeoutAction::Drop
+                })
                 .expect("注册 VBlank 节流定时器失败");
             if let Some(udev) = state.udev_data.as_mut() {
                 if let Some(device) = udev.backends.get_mut(&dev_id) {
@@ -1032,9 +1021,15 @@ fn frame_finish(
         // 延迟重绘以降低客户端缓冲区延迟
         let repaint_delay = Duration::from_secs_f64(frame_duration.as_secs_f64() * 0.6);
 
-        let Some(udev) = state.udev_data.as_ref() else { return; };
-        let Some(device) = udev.backends.get(&dev_id) else { return; };
-        let Some(surface) = device.surfaces.get(&crtc) else { return; };
+        let Some(udev) = state.udev_data.as_ref() else {
+            return;
+        };
+        let Some(device) = udev.backends.get(&dev_id) else {
+            return;
+        };
+        let Some(surface) = device.surfaces.get(&crtc) else {
+            return;
+        };
 
         let timer = if surface
             .render_node
@@ -1171,13 +1166,12 @@ fn render_surface(
 
     let reschedule = match result {
         Ok(render_result) => {
-            let rendered = !render_result.is_empty;
-            if rendered {
-                if let Err(err) = surface.drm_output.queue_frame(Some(())) {
-                    warn!("提交帧失败: {:?}", err);
-                }
+            // 即使 primary plane 没变化（is_empty），cursor plane 位置可能变了
+            // 始终提交帧以确保硬件光标位置更新
+            if let Err(err) = surface.drm_output.queue_frame(Some(())) {
+                warn!("提交帧失败: {:?}", err);
             }
-            !rendered
+            false
         }
         Err(err) => {
             warn!("渲染出错: {:#?}", err);
@@ -1194,8 +1188,7 @@ fn render_surface(
         };
         let next_frame_target =
             frame_target + Duration::from_millis(1_000_000 / output_refresh as u64);
-        let reschedule_timeout = Duration::from(next_frame_target)
-            .saturating_sub(Duration::ZERO);
+        let reschedule_timeout = Duration::from(next_frame_target).saturating_sub(Duration::ZERO);
         let timer = Timer::from_duration(reschedule_timeout.min(Duration::from_millis(16)));
         state
             .loop_handle
