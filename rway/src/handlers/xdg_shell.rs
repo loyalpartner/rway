@@ -54,10 +54,9 @@ impl XdgShellHandler for RwayState {
 
         // 新窗口自动获得键盘焦点（与 Sway 行为一致）
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-        self.seat
-            .get_keyboard()
-            .unwrap()
-            .set_focus(self, Some(wl_surface), serial);
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            keyboard.set_focus(self, Some(wl_surface), serial);
+        }
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
