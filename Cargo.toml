@@ -4,6 +4,7 @@ members = [
     "rway-tiling",
     "rway-config",
     "rway-ipc",
+    "rway-harness",
 ]
 resolver = "2"
 

@@ -1,0 +1,14 @@
+[package]
+name = "rway-harness"
+version = "0.1.0"
+description = "Sway compatibility test harness for rway compositor"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rway-config = { path = "../rway-config" }
+rway-ipc = { path = "../rway-ipc" }
+rway-tiling = { path = "../rway-tiling" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

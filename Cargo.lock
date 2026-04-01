@@ -1470,6 +1470,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rway-harness"
+version = "0.1.0"
+dependencies = [
+ "rway-config",
+ "rway-ipc",
+ "rway-tiling",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rway-ipc"
 version = "0.1.0"
 dependencies = [

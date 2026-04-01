@@ -1,0 +1,37 @@
+{
+  "timestamp": "unix:1775048646",
+  "categories": {
+    "Appearance": {
+      "passed": 9,
+      "total": 25
+    },
+    "Config": {
+      "passed": 16,
+      "total": 43
+    },
+    "Output": {
+      "passed": 11,
+      "total": 23
+    },
+    "Input": {
+      "passed": 18,
+      "total": 28
+    },
+    "Tiling": {
+      "passed": 16,
+      "total": 28
+    },
+    "Workspace": {
+      "passed": 17,
+      "total": 22
+    },
+    "IPC": {
+      "passed": 36,
+      "total": 36
+    },
+    "Window": {
+      "passed": 14,
+      "total": 35
+    }
+  }
+}
