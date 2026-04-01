@@ -13,5 +13,5 @@ pub mod workspace;
 pub mod commands;
 
 // 重导出最常用的公开类型，方便外部 crate 使用
-pub use tree::{Layout, Node, NodeData, NodeId, Rect, Tree};
+pub use tree::{GapsConfig, Layout, Node, NodeData, NodeId, Rect, Tree};
 pub use commands::Direction;

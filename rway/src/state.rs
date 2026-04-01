@@ -182,9 +182,13 @@ impl RwayState {
             output_geo.size.h,
         );
 
-        // 计算布局
+        // 计算布局（从配置读取 gaps）
         let root = self.tiling.root();
-        layout::compute_layout(&mut self.tiling, root, available);
+        let gaps = rway_tiling::GapsConfig {
+            inner: self.config.gaps.inner as i32,
+            outer: self.config.gaps.outer as i32,
+        };
+        layout::compute_layout(&mut self.tiling, root, available, &gaps);
 
         // 获取所有窗口的几何并更新 Space
         let geometries = layout::get_window_geometries(&self.tiling);
@@ -201,6 +205,34 @@ impl RwayState {
                 self.space.map_element(window.clone(), (rect.x, rect.y), false);
             }
         }
+    }
+
+    /// 检测并清理已关闭的窗口：从平铺树和 window_map 中移除死亡窗口
+    ///
+    /// 应在每帧 `space.refresh()` 之后调用。
+    pub fn cleanup_dead_windows(&mut self) {
+        // 收集已死亡的窗口 ID（toplevel 不再存在的窗口视为已关闭）
+        let dead_ids: Vec<u64> = self
+            .window_map
+            .iter()
+            .filter(|(_, window)| window.toplevel().is_none())
+            .map(|(id, _)| *id)
+            .collect();
+
+        if dead_ids.is_empty() {
+            return;
+        }
+
+        // 从平铺树和 window_map 中移除
+        for id in &dead_ids {
+            rway_tiling::commands::remove_window(&mut self.tiling, *id);
+            self.window_map.remove(id);
+        }
+
+        tracing::debug!("清理了 {} 个已关闭窗口", dead_ids.len());
+
+        // 重新布局以填充空出的空间
+        self.relayout();
     }
 
     /// 分配下一个窗口 ID

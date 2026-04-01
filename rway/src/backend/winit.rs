@@ -6,25 +6,24 @@ use smithay::{
     backend::{
         renderer::{
             damage::OutputDamageTracker,
-            element::surface::WaylandSurfaceRenderElement,
             gles::GlesRenderer,
         },
         winit::{self, WinitEvent},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::calloop::EventLoop,
-    utils::{Rectangle, Transform},
+    utils::{Rectangle, Scale, Transform},
 };
 
-use crate::state::RwayState;
+use crate::{border::{window_borders, BorderConfig}, state::RwayState};
 
 /// 初始化 Winit 后端：创建窗口、输出、损坏跟踪器，并注册到事件循环
 pub fn init_winit(
     event_loop: &mut EventLoop<RwayState>,
     state: &mut RwayState,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // 创建 winit 后端（打开一个宿主窗口作为输出）
-    let (mut backend, winit) = winit::init()?;
+    // 创建 winit 后端（打开一个宿主窗口作为输出，使用 GLES 渲染器）
+    let (mut backend, winit) = winit::init::<GlesRenderer>()?;
 
     // 设置输出模式（与 winit 窗口大小匹配）
     let mode = Mode {
@@ -61,6 +60,9 @@ pub fn init_winit(
     // 损坏跟踪器：只重绘脏区域，提高性能
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
+    // 边框配置（可读取自 config，此处使用默认值）
+    let border_config = BorderConfig::default();
+
     // 将 winit 事件源注册到 calloop 事件循环
     event_loop
         .handle()
@@ -89,11 +91,50 @@ pub fn init_winit(
                     let damage = Rectangle::from_size(size);
 
                     {
-                        // 绑定帧缓冲区并渲染
+                        // 1x 缩放（winit 嵌套合成器暂不支持 HiDPI 缩放）
+                        let scale = Scale::from(1.0_f64);
+
+                        // 获取当前聚焦的键盘 surface，用于判断哪个窗口拥有焦点
+                        let focused_surface = state
+                            .seat
+                            .get_keyboard()
+                            .and_then(|kb| kb.current_focus());
+
+                        // 为每个已映射窗口生成边框渲染元素（位于 custom_elements 层，绘制在窗口下方）
+                        // custom_elements 先于 space 元素渲染（z-order 最低），因此边框会被窗口内容遮盖。
+                        // 由于边框绘制在窗口外侧（负偏移），不会与窗口内容重叠，效果正确。
+                        let border_elements: Vec<_> = state
+                            .space
+                            .elements()
+                            .flat_map(|window| {
+                                // 判断该窗口是否持有键盘焦点
+                                let is_focused = focused_surface.as_ref().map_or(false, |fs| {
+                                    window
+                                        .toplevel()
+                                        .map_or(false, |tl| tl.wl_surface() == fs)
+                                });
+
+                                // 根据焦点状态选择边框颜色
+                                let color = if is_focused {
+                                    border_config.focused_color
+                                } else {
+                                    border_config.unfocused_color
+                                };
+
+                                // 获取窗口在 space 中的逻辑几何（位置 + 尺寸）
+                                if let Some(geo) = state.space.element_geometry(window) {
+                                    window_borders(geo, color, border_config.width, scale)
+                                } else {
+                                    vec![]
+                                }
+                            })
+                            .collect();
+
+                        // 绑定帧缓冲区并渲染（边框作为 custom_elements 最先绘制）
                         let (renderer, mut framebuffer) = backend.bind().unwrap();
                         smithay::desktop::space::render_output::<
                             _,
-                            WaylandSurfaceRenderElement<GlesRenderer>,
+                            smithay::backend::renderer::element::solid::SolidColorRenderElement,
                             _,
                             _,
                         >(
@@ -103,7 +144,7 @@ pub fn init_winit(
                             1.0,
                             0,
                             [&state.space],
-                            &[],
+                            &border_elements,
                             &mut damage_tracker,
                             [0.1, 0.1, 0.1, 1.0], // 深灰色背景
                         )
@@ -126,6 +167,10 @@ pub fn init_winit(
                     // 清理过期的弹窗并刷新空间
                     state.space.refresh();
                     state.popups.cleanup();
+
+                    // 检测并清理已关闭的窗口，释放平铺树中的空间
+                    state.cleanup_dead_windows();
+
                     let _ = state.display_handle.flush_clients();
 
                     // 请求下一帧重绘（驱动渲染循环）

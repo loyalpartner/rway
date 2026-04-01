@@ -93,6 +93,43 @@ pub fn split(tree: &mut Tree, layout: Layout) {
     }
 }
 
+/// 切换窗口的浮动状态。返回 true 表示找到并切换成功。
+pub fn toggle_floating(tree: &mut Tree, window_id: u64) -> bool {
+    let win_node_id = match find_window_by_id(tree, window_id) {
+        Some(id) => id,
+        None => return false,
+    };
+    if let Some(node) = tree.get_mut(win_node_id) {
+        if let NodeData::Window { ref mut floating, .. } = node.data {
+            *floating = !*floating;
+            return true;
+        }
+    }
+    false
+}
+
+/// 从当前聚焦工作区沿聚焦路径找到叶子窗口，返回其 window_id。
+pub fn find_focused_window_id(tree: &Tree) -> Option<u64> {
+    let ws_id = get_focused_workspace(tree)?;
+    find_focused_leaf(tree, ws_id)
+}
+
+fn find_focused_leaf(tree: &Tree, node_id: NodeId) -> Option<u64> {
+    let node = tree.get(node_id)?;
+    match &node.data {
+        NodeData::Window { window_id, .. } => Some(*window_id),
+        NodeData::Container { focused_child, .. } => {
+            let children = tree.children(node_id);
+            let idx = (*focused_child).min(children.len().saturating_sub(1));
+            children.get(idx).and_then(|&c| find_focused_leaf(tree, c))
+        }
+        _ => {
+            let children = tree.children(node_id);
+            children.first().and_then(|&c| find_focused_leaf(tree, c))
+        }
+    }
+}
+
 // ── 私有辅助 ─────────────────────────────────────────────────
 
 /// 在 `parent_id` 中插入新窗口
@@ -334,8 +371,101 @@ fn is_window(data: &NodeData) -> bool {
 mod tests {
     use super::*;
     use crate::layout::{compute_layout, get_window_geometries};
-    use crate::tree::{Layout, NodeData, Rect, Tree};
+    use crate::tree::{GapsConfig, Layout, NodeData, Rect, Tree};
     use crate::workspace::{add_output, add_workspace};
+    // ── toggle_floating 相关测试（TDD 红色阶段） ──────────────────────
+
+    /// 对存在的窗口调用 toggle_floating 应返回 true 并将 floating 置为 true
+    #[test]
+    fn toggle_floating_sets_flag() {
+        let mut tree = tree_with_workspace();
+        insert_window(&mut tree, 10);
+
+        let result = toggle_floating(&mut tree, 10);
+        assert!(result, "应返回 true 表示找到并切换成功");
+
+        // 验证 floating 字段已置为 true
+        let node_id = find_window_by_id(&tree, 10).expect("窗口应存在");
+        if let NodeData::Window { floating, .. } = &tree.get(node_id).unwrap().data {
+            assert!(*floating, "floating 应为 true");
+        } else {
+            panic!("应为 Window 节点");
+        }
+    }
+
+    /// 对同一窗口连续调用两次 toggle_floating，floating 应恢复为 false
+    #[test]
+    fn toggle_floating_twice_restores() {
+        let mut tree = tree_with_workspace();
+        insert_window(&mut tree, 20);
+
+        toggle_floating(&mut tree, 20);
+        toggle_floating(&mut tree, 20);
+
+        let node_id = find_window_by_id(&tree, 20).expect("窗口应存在");
+        if let NodeData::Window { floating, .. } = &tree.get(node_id).unwrap().data {
+            assert!(!*floating, "两次切换后 floating 应恢复为 false");
+        } else {
+            panic!("应为 Window 节点");
+        }
+    }
+
+    /// 对不存在的 window_id 调用 toggle_floating 应返回 false
+    #[test]
+    fn toggle_floating_nonexistent_returns_false() {
+        let mut tree = tree_with_workspace();
+        let result = toggle_floating(&mut tree, 9999);
+        assert!(!result, "不存在的窗口应返回 false");
+    }
+
+    /// 空树中调用 toggle_floating 不应 panic，应返回 false
+    #[test]
+    fn toggle_floating_empty_tree_returns_false() {
+        let mut tree = Tree::new();
+        let result = toggle_floating(&mut tree, 1);
+        assert!(!result);
+    }
+
+    // ── find_focused_window_id 相关测试 ───────────────────────────────
+
+    /// 工作区有聚焦窗口时应返回其 window_id
+    #[test]
+    fn find_focused_window_id_returns_leaf_window() {
+        let mut tree = tree_with_workspace();
+        insert_window(&mut tree, 42);
+
+        let result = find_focused_window_id(&tree);
+        assert_eq!(result, Some(42), "应返回聚焦窗口的 window_id");
+    }
+
+    /// 空工作区时应返回 None
+    #[test]
+    fn find_focused_window_id_empty_workspace_returns_none() {
+        let tree = tree_with_workspace();
+        let result = find_focused_window_id(&tree);
+        assert!(result.is_none(), "空工作区应返回 None");
+    }
+
+    /// 没有任何工作区时应返回 None
+    #[test]
+    fn find_focused_window_id_no_workspace_returns_none() {
+        let tree = Tree::new();
+        let result = find_focused_window_id(&tree);
+        assert!(result.is_none());
+    }
+
+    /// 工作区有两个窗口（SplitH 容器），应返回聚焦叶子窗口的 id
+    #[test]
+    fn find_focused_window_id_with_container_returns_focused_leaf() {
+        let mut tree = tree_with_workspace();
+        insert_window(&mut tree, 1);
+        insert_window(&mut tree, 2);
+        // 插入第二个窗口后，focused_child=1（即 window 2 聚焦）
+
+        let result = find_focused_window_id(&tree);
+        // 聚焦的叶子应是最后插入的窗口 id=2
+        assert_eq!(result, Some(2));
+    }
 
     // ── 辅助 ──────────────────────────────────────────────────
 
@@ -394,7 +524,7 @@ mod tests {
         insert_window(&mut tree, 1);
         insert_window(&mut tree, 2);
         let root = tree.root();
-        compute_layout(&mut tree, root, screen());
+        compute_layout(&mut tree, root, screen(), &GapsConfig::default());
 
         let geoms = get_window_geometries(&tree);
         assert_eq!(geoms.len(), 2);
@@ -610,7 +740,7 @@ mod tests {
         remove_window(&mut tree, 1);
 
         let root = tree.root();
-        compute_layout(&mut tree, root, screen());
+        compute_layout(&mut tree, root, screen(), &GapsConfig::default());
 
         let geoms = get_window_geometries(&tree);
         assert_eq!(geoms.len(), 1);

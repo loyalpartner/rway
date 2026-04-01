@@ -1,5 +1,20 @@
 // Arena-allocated N-ary tree for i3/Sway-compatible tiling layout
 
+/// 间距配置：控制窗口之间以及窗口与屏幕边缘之间的空白区域
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GapsConfig {
+    /// 相邻窗口之间的间距（像素）
+    pub inner: i32,
+    /// 窗口与屏幕边缘之间的间距（像素）
+    pub outer: i32,
+}
+
+impl Default for GapsConfig {
+    fn default() -> Self {
+        Self { inner: 0, outer: 0 }
+    }
+}
+
 /// 矩形区域，用于描述节点的几何位置与尺寸
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {

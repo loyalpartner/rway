@@ -90,7 +90,10 @@ pub fn execute_action(state: &mut RwayState, action: &Action) {
             }
         }
         Action::ToggleFloating => {
-            tracing::debug!("toggle floating: 尚未实现");
+            if let Some(win_id) = rway_tiling::commands::find_focused_window_id(&state.tiling) {
+                rway_tiling::commands::toggle_floating(&mut state.tiling, win_id);
+                state.relayout();
+            }
         }
         Action::Fullscreen => {
             tracing::debug!("fullscreen: 尚未实现");
