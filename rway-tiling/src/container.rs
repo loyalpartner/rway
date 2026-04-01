@@ -90,7 +90,7 @@ pub fn set_focused_child(tree: &mut Tree, container_id: NodeId, child_id: NodeId
 
 /// 按比例归一化 sizes，使总和为 `target_sum`（默认 1.0 风格，但这里
 /// 直接保持原始比例，仅确保没有负值或零值）。
-pub fn normalize_sizes(sizes: &mut Vec<f64>) {
+pub fn normalize_sizes(sizes: &mut [f64]) {
     let total: f64 = sizes.iter().sum();
     if total <= 0.0 {
         // 所有尺寸无效，重置为均等
@@ -269,6 +269,9 @@ mod tests {
             window_id: 1,
             floating: false,
             fullscreen: false,
+            fullscreen_global: false,
+            sticky: false,
+            marks: Vec::new(),
             geometry: Rect::new(0, 0, 100, 100),
             saved_geometry: None,
         });
@@ -276,6 +279,9 @@ mod tests {
             window_id: 2,
             floating: false,
             fullscreen: false,
+            fullscreen_global: false,
+            sticky: false,
+            marks: Vec::new(),
             geometry: Rect::new(0, 0, 100, 100),
             saved_geometry: None,
         });
@@ -314,6 +320,9 @@ mod tests {
             window_id: 1,
             floating: false,
             fullscreen: false,
+            fullscreen_global: false,
+            sticky: false,
+            marks: Vec::new(),
             geometry: Rect::new(0, 0, 100, 100),
             saved_geometry: None,
         });
@@ -321,6 +330,9 @@ mod tests {
             window_id: 2,
             floating: false,
             fullscreen: false,
+            fullscreen_global: false,
+            sticky: false,
+            marks: Vec::new(),
             geometry: Rect::new(0, 0, 100, 100),
             saved_geometry: None,
         });
@@ -343,6 +355,9 @@ mod tests {
             window_id: 99,
             floating: false,
             fullscreen: false,
+            fullscreen_global: false,
+            sticky: false,
+            marks: Vec::new(),
             geometry: Rect::new(0, 0, 100, 100),
             saved_geometry: None,
         });

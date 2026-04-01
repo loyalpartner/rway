@@ -130,6 +130,510 @@ fn find_focused_leaf(tree: &Tree, node_id: NodeId) -> Option<u64> {
     }
 }
 
+/// Resize 轴向（rway-tiling 本地定义，不依赖 rway-config）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeAxis {
+    Width,
+    Height,
+}
+
+/// 将聚焦窗口沿 `direction` 方向在兄弟节点间交换位置。
+pub fn move_window(tree: &mut Tree, direction: Direction) -> bool {
+    let ws_id = match get_focused_workspace(tree) {
+        Some(id) => id,
+        None => return false,
+    };
+    move_window_in(tree, ws_id, direction)
+}
+
+/// 将当前聚焦窗口移动到目标工作区。
+pub fn move_to_workspace(tree: &mut Tree, target_ws: &str) -> bool {
+    let win_id = match find_focused_window_id(tree) {
+        Some(id) => id,
+        None => return false,
+    };
+
+    // 找到目标工作区
+    let target_ws_id = find_workspace_by_name_global(tree, target_ws);
+    let target_ws_id = match target_ws_id {
+        Some(id) => id,
+        None => return false,
+    };
+
+    // 从当前位置移除窗口
+    remove_window(tree, win_id);
+    // 在目标工作区插入窗口
+    insert_window_into(tree, target_ws_id, win_id);
+    true
+}
+
+/// 调整节点在父容器中的 sizes 比例。
+/// `delta_ppt` 为正表示增大，为负表示缩小（百分点）。
+pub fn resize_container(
+    tree: &mut Tree,
+    node_id: NodeId,
+    axis: ResizeAxis,
+    delta_ppt: f64,
+) -> bool {
+    let parent_id = match tree.parent(node_id) {
+        Some(id) => id,
+        None => return false,
+    };
+
+    // 检查父容器布局方向是否与 axis 匹配
+    let layout_matches = match tree.get(parent_id) {
+        Some(n) => match &n.data {
+            NodeData::Container { layout, .. } => matches!(
+                (axis, layout),
+                (ResizeAxis::Width, Layout::SplitH) | (ResizeAxis::Height, Layout::SplitV)
+            ),
+            _ => false,
+        },
+        None => false,
+    };
+    if !layout_matches {
+        return false;
+    }
+
+    let children: Vec<NodeId> = tree.children(parent_id).to_vec();
+    let my_index = match children.iter().position(|&c| c == node_id) {
+        Some(i) => i,
+        None => return false,
+    };
+
+    // 找到相邻兄弟来分配 delta
+    let sibling_index = if my_index + 1 < children.len() {
+        my_index + 1
+    } else if my_index > 0 {
+        my_index - 1
+    } else {
+        return false;
+    };
+
+    if let Some(node) = tree.get_mut(parent_id) {
+        if let NodeData::Container { ref mut sizes, .. } = node.data {
+            if my_index < sizes.len() && sibling_index < sizes.len() {
+                let delta_norm = delta_ppt / 100.0;
+                sizes[my_index] += delta_norm;
+                sizes[sibling_index] -= delta_norm;
+                // 确保不低于最小值
+                if sizes[my_index] < 0.05 {
+                    let diff = 0.05 - sizes[my_index];
+                    sizes[my_index] = 0.05;
+                    sizes[sibling_index] -= diff;
+                }
+                if sizes[sibling_index] < 0.05 {
+                    let diff = 0.05 - sizes[sibling_index];
+                    sizes[sibling_index] = 0.05;
+                    sizes[my_index] -= diff;
+                }
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// 将焦点层级上移到父容器。
+pub fn focus_parent(tree: &mut Tree) -> bool {
+    let ws_id = match get_focused_workspace(tree) {
+        Some(id) => id,
+        None => return false,
+    };
+
+    // 当前焦点节点
+    let current = tree.focus_node.unwrap_or_else(|| {
+        // 沿聚焦路径找到叶子节点的 NodeId
+        find_focused_leaf_node(tree, ws_id).unwrap_or(ws_id)
+    });
+
+    let parent = tree.parent(current);
+    match parent {
+        Some(pid) if pid != tree.root() => {
+            tree.focus_node = Some(pid);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// 将焦点层级下移到聚焦子节点。
+pub fn focus_child(tree: &mut Tree) -> bool {
+    let current = match tree.focus_node {
+        Some(id) => id,
+        None => return false, // 已在叶子层级
+    };
+
+    let node = match tree.get(current) {
+        Some(n) => n.data.clone(),
+        None => return false,
+    };
+
+    match &node {
+        NodeData::Container { focused_child, .. } => {
+            let children: Vec<NodeId> = tree.children(current).to_vec();
+            let idx = (*focused_child).min(children.len().saturating_sub(1));
+            if let Some(&child_id) = children.get(idx) {
+                // 如果子节点是窗口，回到叶子层级
+                let is_leaf = tree.get(child_id).map(|n| {
+                    matches!(n.data, NodeData::Window { .. })
+                }).unwrap_or(false);
+                tree.focus_node = if is_leaf { None } else { Some(child_id) };
+                true
+            } else {
+                false
+            }
+        }
+        NodeData::Workspace { .. } => {
+            let children: Vec<NodeId> = tree.children(current).to_vec();
+            if let Some(&child_id) = children.first() {
+                let is_leaf = tree.get(child_id).map(|n| {
+                    matches!(n.data, NodeData::Window { .. })
+                }).unwrap_or(false);
+                tree.focus_node = if is_leaf { None } else { Some(child_id) };
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// 设置窗口的浮动状态为指定值。
+pub fn set_floating(tree: &mut Tree, window_id: u64, enable: bool) -> bool {
+    let win_node_id = match find_window_by_id(tree, window_id) {
+        Some(id) => id,
+        None => return false,
+    };
+    if let Some(node) = tree.get_mut(win_node_id) {
+        if let NodeData::Window { ref mut floating, .. } = node.data {
+            *floating = enable;
+            return true;
+        }
+    }
+    false
+}
+
+/// 设置窗口的全屏状态为指定值。
+pub fn set_fullscreen(tree: &mut Tree, window_id: u64, enable: bool) -> bool {
+    let win_node_id = match find_window_by_id(tree, window_id) {
+        Some(id) => id,
+        None => return false,
+    };
+    if let Some(node) = tree.get_mut(win_node_id) {
+        if let NodeData::Window {
+            ref mut fullscreen,
+            ref mut saved_geometry,
+            ref geometry,
+            ..
+        } = node.data
+        {
+            if enable && !*fullscreen {
+                *saved_geometry = Some(*geometry);
+            }
+            *fullscreen = enable;
+            return true;
+        }
+    }
+    false
+}
+
+/// 切换窗口的全屏状态。
+pub fn toggle_fullscreen(tree: &mut Tree, window_id: u64) -> bool {
+    let current = find_window_by_id(tree, window_id).and_then(|id| {
+        tree.get(id).and_then(|n| {
+            if let NodeData::Window { fullscreen, .. } = &n.data {
+                Some(!*fullscreen)
+            } else {
+                None
+            }
+        })
+    });
+    match current {
+        Some(new_state) => set_fullscreen(tree, window_id, new_state),
+        None => false,
+    }
+}
+
+/// 公开版的 find_window_by_id（用于外部 crate 获取 NodeId）
+pub fn find_node_by_window_id(tree: &Tree, window_id: u64) -> Option<NodeId> {
+    find_window_by_id(tree, window_id)
+}
+
+/// 切换聚焦容器的布局类型。
+///
+/// 循环顺序: SplitH -> SplitV -> Tabbed -> Stacked -> SplitH
+pub fn layout_toggle(tree: &mut Tree) {
+    let ws_id = match get_focused_workspace(tree) {
+        Some(id) => id,
+        None => return,
+    };
+
+    let container_id = match find_focused_container(tree, ws_id) {
+        Some(id) => id,
+        None => return,
+    };
+
+    let next_layout = match tree.get(container_id) {
+        Some(node) => match &node.data {
+            NodeData::Container { layout, .. } => match layout {
+                Layout::SplitH => Layout::SplitV,
+                Layout::SplitV => Layout::Tabbed,
+                Layout::Tabbed => Layout::Stacked,
+                Layout::Stacked => Layout::SplitH,
+            },
+            _ => return,
+        },
+        None => return,
+    };
+
+    set_container_layout(tree, container_id, next_layout);
+}
+
+/// 设置窗口的 sticky 标志。返回 true 表示找到并设置成功。
+pub fn set_sticky(tree: &mut Tree, window_id: u64, enable: bool) -> bool {
+    let win_node_id = match find_window_by_id(tree, window_id) {
+        Some(id) => id,
+        None => return false,
+    };
+    if let Some(node) = tree.get_mut(win_node_id) {
+        if let NodeData::Window { ref mut sticky, .. } = node.data {
+            *sticky = enable;
+            return true;
+        }
+    }
+    false
+}
+
+/// 切换窗口的 sticky 标志。返回 true 表示找到并切换成功。
+pub fn toggle_sticky(tree: &mut Tree, window_id: u64) -> bool {
+    let current = find_window_by_id(tree, window_id).and_then(|id| {
+        tree.get(id).and_then(|n| {
+            if let NodeData::Window { sticky, .. } = &n.data {
+                Some(!*sticky)
+            } else {
+                None
+            }
+        })
+    });
+    match current {
+        Some(new_state) => set_sticky(tree, window_id, new_state),
+        None => false,
+    }
+}
+
+/// 向窗口添加标记。若标记已存在于该窗口则不重复添加。
+/// 返回 true 表示找到窗口（无论是否实际添加了标记）。
+pub fn add_mark(tree: &mut Tree, window_id: u64, mark: &str) -> bool {
+    let win_node_id = match find_window_by_id(tree, window_id) {
+        Some(id) => id,
+        None => return false,
+    };
+    if let Some(node) = tree.get_mut(win_node_id) {
+        if let NodeData::Window { ref mut marks, .. } = node.data {
+            if !marks.iter().any(|m| m == mark) {
+                marks.push(mark.to_string());
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// 移除窗口上的标记。`mark` 为 None 时移除所有标记。
+/// 返回 true 表示找到窗口。
+pub fn remove_mark(tree: &mut Tree, window_id: u64, mark: Option<&str>) -> bool {
+    let win_node_id = match find_window_by_id(tree, window_id) {
+        Some(id) => id,
+        None => return false,
+    };
+    if let Some(node) = tree.get_mut(win_node_id) {
+        if let NodeData::Window { ref mut marks, .. } = node.data {
+            match mark {
+                Some(m) => marks.retain(|existing| existing != m),
+                None => marks.clear(),
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// 获取窗口上的所有标记。若窗口不存在则返回空 Vec。
+pub fn get_marks(tree: &Tree, window_id: u64) -> Vec<String> {
+    let win_node_id = match find_window_by_id(tree, window_id) {
+        Some(id) => id,
+        None => return Vec::new(),
+    };
+    match tree.get(win_node_id) {
+        Some(node) => match &node.data {
+            NodeData::Window { marks, .. } => marks.clone(),
+            _ => Vec::new(),
+        },
+        None => Vec::new(),
+    }
+}
+
+/// 设置窗口的全局全屏（fullscreen_global）标志。
+/// 返回 true 表示找到并设置成功。
+pub fn set_fullscreen_global(tree: &mut Tree, window_id: u64, enable: bool) -> bool {
+    let win_node_id = match find_window_by_id(tree, window_id) {
+        Some(id) => id,
+        None => return false,
+    };
+    if let Some(node) = tree.get_mut(win_node_id) {
+        if let NodeData::Window {
+            ref mut fullscreen_global,
+            ref mut saved_geometry,
+            ref geometry,
+            ..
+        } = node.data
+        {
+            if enable && !*fullscreen_global {
+                *saved_geometry = Some(*geometry);
+            }
+            *fullscreen_global = enable;
+            return true;
+        }
+    }
+    false
+}
+
+/// 切换窗口的全局全屏（fullscreen_global）标志。
+/// 返回 true 表示找到并切换成功。
+pub fn toggle_fullscreen_global(tree: &mut Tree, window_id: u64) -> bool {
+    let current = find_window_by_id(tree, window_id).and_then(|id| {
+        tree.get(id).and_then(|n| {
+            if let NodeData::Window { fullscreen_global, .. } = &n.data {
+                Some(!*fullscreen_global)
+            } else {
+                None
+            }
+        })
+    });
+    match current {
+        Some(new_state) => set_fullscreen_global(tree, window_id, new_state),
+        None => false,
+    }
+}
+
+/// 交换同一父容器下的两个子节点。
+/// 仅在两个节点拥有相同父节点时生效。返回 true 表示交换成功。
+pub fn swap_containers(tree: &mut Tree, node_a: NodeId, node_b: NodeId) -> bool {
+    // 验证两个节点有相同父节点
+    let parent_a = tree.parent(node_a);
+    let parent_b = tree.parent(node_b);
+    let parent_id = match (parent_a, parent_b) {
+        (Some(a), Some(b)) if a == b => a,
+        _ => return false,
+    };
+
+    // 找到两个节点在 children 中的索引
+    let children: Vec<NodeId> = tree.children(parent_id).to_vec();
+    let idx_a = match children.iter().position(|&c| c == node_a) {
+        Some(i) => i,
+        None => return false,
+    };
+    let idx_b = match children.iter().position(|&c| c == node_b) {
+        Some(i) => i,
+        None => return false,
+    };
+
+    if idx_a == idx_b {
+        return false;
+    }
+
+    // 交换 children 列表和 sizes（若为 Container）
+    if let Some(parent_node) = tree.get_mut(parent_id) {
+        parent_node.children.swap(idx_a, idx_b);
+        if let NodeData::Container { ref mut sizes, .. } = parent_node.data {
+            if idx_a < sizes.len() && idx_b < sizes.len() {
+                sizes.swap(idx_a, idx_b);
+            }
+        }
+    }
+
+    true
+}
+
+/// 将焦点移到当前容器中的下一个兄弟节点。
+/// 在边界处（最后一个）不环绕，返回 false。
+pub fn focus_next_sibling(tree: &mut Tree) -> bool {
+    let ws_id = match get_focused_workspace(tree) {
+        Some(id) => id,
+        None => return false,
+    };
+
+    // 找到聚焦叶子窗口的 NodeId
+    let leaf_id = match find_focused_leaf_node(tree, ws_id) {
+        Some(id) => id,
+        None => return false,
+    };
+
+    let parent_id = match tree.parent(leaf_id) {
+        Some(id) => id,
+        None => return false,
+    };
+
+    let children: Vec<NodeId> = tree.children(parent_id).to_vec();
+    let current_idx = match children.iter().position(|&c| c == leaf_id) {
+        Some(i) => i,
+        None => return false,
+    };
+
+    if current_idx + 1 >= children.len() {
+        return false;
+    }
+
+    let new_idx = current_idx + 1;
+    if let Some(node) = tree.get_mut(parent_id) {
+        if let NodeData::Container { ref mut focused_child, .. } = node.data {
+            *focused_child = new_idx;
+            return true;
+        }
+    }
+    false
+}
+
+/// 将焦点移到当前容器中的上一个兄弟节点。
+/// 在边界处（第一个）不环绕，返回 false。
+pub fn focus_prev_sibling(tree: &mut Tree) -> bool {
+    let ws_id = match get_focused_workspace(tree) {
+        Some(id) => id,
+        None => return false,
+    };
+
+    let leaf_id = match find_focused_leaf_node(tree, ws_id) {
+        Some(id) => id,
+        None => return false,
+    };
+
+    let parent_id = match tree.parent(leaf_id) {
+        Some(id) => id,
+        None => return false,
+    };
+
+    let children: Vec<NodeId> = tree.children(parent_id).to_vec();
+    let current_idx = match children.iter().position(|&c| c == leaf_id) {
+        Some(i) => i,
+        None => return false,
+    };
+
+    if current_idx == 0 {
+        return false;
+    }
+
+    let new_idx = current_idx - 1;
+    if let Some(node) = tree.get_mut(parent_id) {
+        if let NodeData::Container { ref mut focused_child, .. } = node.data {
+            *focused_child = new_idx;
+            return true;
+        }
+    }
+    false
+}
+
 // ── 私有辅助 ─────────────────────────────────────────────────
 
 /// 在 `parent_id` 中插入新窗口
@@ -138,6 +642,9 @@ fn insert_window_into(tree: &mut Tree, parent_id: NodeId, window_id: u64) -> Nod
         window_id,
         floating: false,
         fullscreen: false,
+        fullscreen_global: false,
+        sticky: false,
+        marks: Vec::new(),
         geometry: Rect::new(0, 0, 0, 0),
         saved_geometry: None,
     };
@@ -292,11 +799,11 @@ fn move_focus_in(tree: &mut Tree, node_id: NodeId, direction: Direction) -> bool
             }
 
             // 否则在本容器层面处理方向键
-            let can_move = match (layout, direction) {
+            let can_move = matches!(
+                (layout, direction),
                 (Layout::SplitH, Direction::Left) | (Layout::SplitH, Direction::Right)
-                | (Layout::SplitV, Direction::Up) | (Layout::SplitV, Direction::Down) => true,
-                _ => false,
-            };
+                | (Layout::SplitV, Direction::Up) | (Layout::SplitV, Direction::Down)
+            );
 
             if can_move && !children.is_empty() {
                 let new_focus = match direction {
@@ -361,6 +868,112 @@ fn find_focused_container(tree: &Tree, node_id: NodeId) -> Option<NodeId> {
 
 fn is_window(data: &NodeData) -> bool {
     matches!(data, NodeData::Window { .. })
+}
+
+/// 在子树中递归移动窗口位置（方向键移动）
+fn move_window_in(tree: &mut Tree, node_id: NodeId, direction: Direction) -> bool {
+    let node_data = match tree.get(node_id) {
+        Some(n) => n.data.clone(),
+        None => return false,
+    };
+
+    match &node_data {
+        NodeData::Container { layout, focused_child, .. } => {
+            let layout = *layout;
+            let focused = *focused_child;
+            let children: Vec<NodeId> = tree.children(node_id).to_vec();
+
+            // 先尝试递归进入聚焦子容器
+            if let Some(&focused_id) = children.get(focused) {
+                let child_data = tree.get(focused_id).map(|n| n.data.clone());
+                if let Some(NodeData::Container { .. }) = child_data {
+                    if move_window_in(tree, focused_id, direction) {
+                        return true;
+                    }
+                }
+            }
+
+            // 本容器层面处理
+            let can_move = matches!(
+                (layout, direction),
+                (Layout::SplitH, Direction::Left) | (Layout::SplitH, Direction::Right)
+                | (Layout::SplitV, Direction::Up) | (Layout::SplitV, Direction::Down)
+            );
+
+            if can_move && !children.is_empty() {
+                let new_pos = match direction {
+                    Direction::Left | Direction::Up => {
+                        if focused > 0 { focused - 1 } else { return false; }
+                    }
+                    Direction::Right | Direction::Down => {
+                        if focused + 1 < children.len() { focused + 1 } else { return false; }
+                    }
+                };
+
+                // 交换 children 和 sizes
+                if let Some(node) = tree.get_mut(node_id) {
+                    node.children.swap(focused, new_pos);
+                    if let NodeData::Container {
+                        ref mut sizes,
+                        ref mut focused_child,
+                        ..
+                    } = node.data
+                    {
+                        if focused < sizes.len() && new_pos < sizes.len() {
+                            sizes.swap(focused, new_pos);
+                        }
+                        *focused_child = new_pos;
+                    }
+                }
+                return true;
+            }
+            false
+        }
+        NodeData::Workspace { .. } => {
+            let children: Vec<NodeId> = tree.children(node_id).to_vec();
+            for &child in &children {
+                if move_window_in(tree, child, direction) {
+                    return true;
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// 全局搜索工作区（跨所有输出）
+fn find_workspace_by_name_global(tree: &Tree, name: &str) -> Option<NodeId> {
+    let root = tree.root();
+    for &output_id in tree.children(root) {
+        for &ws_id in tree.children(output_id) {
+            if let Some(node) = tree.get(ws_id) {
+                if let NodeData::Workspace { name: ws_name, .. } = &node.data {
+                    if ws_name == name {
+                        return Some(ws_id);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 沿聚焦路径找到叶子节点的 NodeId
+fn find_focused_leaf_node(tree: &Tree, node_id: NodeId) -> Option<NodeId> {
+    let node = tree.get(node_id)?;
+    match &node.data {
+        NodeData::Window { .. } => Some(node_id),
+        NodeData::Container { focused_child, .. } => {
+            let children = tree.children(node_id);
+            let idx = (*focused_child).min(children.len().saturating_sub(1));
+            children.get(idx).and_then(|&c| find_focused_leaf_node(tree, c))
+        }
+        _ => {
+            let children = tree.children(node_id);
+            children.first().and_then(|&c| find_focused_leaf_node(tree, c))
+        }
+    }
 }
 
 // ============================================================

@@ -42,9 +42,11 @@ pub fn execute_action(state: &mut RwayState, action: &Action) {
             // 更新 Smithay 键盘焦点到平铺树的聚焦窗口
             update_keyboard_focus(state);
         }
-        Action::Move(_dir) => {
-            // TODO: 移动窗口到指定方向
-            tracing::debug!("move: 尚未实现");
+        Action::Move(dir) => {
+            let direction = config_dir_to_tiling(dir);
+            rway_tiling::commands::move_window(&mut state.tiling, direction);
+            state.relayout();
+            update_keyboard_focus(state);
         }
         Action::Workspace(name) => {
             // 如果目标工作区不存在，先在当前输出上创建
@@ -57,9 +59,38 @@ pub fn execute_action(state: &mut RwayState, action: &Action) {
             state.relayout();
             update_keyboard_focus(state);
         }
-        Action::MoveToWorkspace(_name) => {
-            // TODO: 移动窗口到工作区
-            tracing::debug!("move to workspace: 尚未实现");
+        Action::MoveToWorkspace(name) => {
+            // 如果目标工作区不存在，先创建
+            if let Some(output_id) = state.output_node {
+                rway_tiling::workspace::add_workspace(&mut state.tiling, output_id, name);
+            }
+            rway_tiling::commands::move_to_workspace(&mut state.tiling, name);
+            state.relayout();
+            update_keyboard_focus(state);
+        }
+        Action::FocusParent => {
+            rway_tiling::commands::focus_parent(&mut state.tiling);
+            update_keyboard_focus(state);
+        }
+        Action::FocusChild => {
+            rway_tiling::commands::focus_child(&mut state.tiling);
+            update_keyboard_focus(state);
+        }
+        Action::Resize { grow, axis, amount, unit } => {
+            if let Some(win_id) = rway_tiling::commands::find_focused_window_id(&state.tiling) {
+                if let Some(node_id) = rway_tiling::commands::find_node_by_window_id(&state.tiling, win_id) {
+                    let delta = if *grow { *amount as f64 } else { -(*amount as f64) };
+                    let tiling_axis = match axis {
+                        rway_config::ResizeAxis::Width => rway_tiling::commands::ResizeAxis::Width,
+                        rway_config::ResizeAxis::Height => rway_tiling::commands::ResizeAxis::Height,
+                    };
+                    let _ = unit; // unit is informational for now
+                    rway_tiling::commands::resize_container(
+                        &mut state.tiling, node_id, tiling_axis, delta,
+                    );
+                    state.relayout();
+                }
+            }
         }
         Action::Split(split_dir) => {
             let layout = match split_dir {
@@ -92,14 +123,37 @@ pub fn execute_action(state: &mut RwayState, action: &Action) {
                 }
             }
         }
-        Action::ToggleFloating => {
+        Action::Floating(float_action) => {
             if let Some(win_id) = rway_tiling::commands::find_focused_window_id(&state.tiling) {
-                rway_tiling::commands::toggle_floating(&mut state.tiling, win_id);
+                match float_action {
+                    rway_config::FloatingAction::Toggle => {
+                        rway_tiling::commands::toggle_floating(&mut state.tiling, win_id);
+                    }
+                    rway_config::FloatingAction::Enable => {
+                        rway_tiling::commands::set_floating(&mut state.tiling, win_id, true);
+                    }
+                    rway_config::FloatingAction::Disable => {
+                        rway_tiling::commands::set_floating(&mut state.tiling, win_id, false);
+                    }
+                }
                 state.relayout();
             }
         }
-        Action::Fullscreen => {
-            tracing::debug!("fullscreen: 尚未实现");
+        Action::Fullscreen(fs_action) => {
+            if let Some(win_id) = rway_tiling::commands::find_focused_window_id(&state.tiling) {
+                match fs_action {
+                    rway_config::FullscreenAction::Toggle => {
+                        rway_tiling::commands::toggle_fullscreen(&mut state.tiling, win_id);
+                    }
+                    rway_config::FullscreenAction::Enable => {
+                        rway_tiling::commands::set_fullscreen(&mut state.tiling, win_id, true);
+                    }
+                    rway_config::FullscreenAction::Disable => {
+                        rway_tiling::commands::set_fullscreen(&mut state.tiling, win_id, false);
+                    }
+                }
+                state.relayout();
+            }
         }
         Action::Reload => {
             tracing::info!("重新加载配置");
@@ -111,6 +165,10 @@ pub fn execute_action(state: &mut RwayState, action: &Action) {
         }
         Action::Raw(cmd) => {
             tracing::debug!("raw command: {}", cmd);
+        }
+        // 已在 config 中定义但尚未在合成器中实现的动作
+        other => {
+            tracing::warn!("unimplemented action: {:?}", other);
         }
     }
 }

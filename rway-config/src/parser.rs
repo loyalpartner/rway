@@ -5,9 +5,11 @@ use std::path::Path;
 use thiserror::Error;
 
 use crate::types::{
-    Action, BorderStyle, Config, Direction, ExecCommand, GapsConfig, InputConfig, Keybinding,
-    LayoutType, Modifier, OutputConfig, SplitDirection, WindowCriteria, WindowRule,
-    WindowRuleAction, WorkspaceConfig,
+    Action, AssignRule, BarConfig, Bindcode, BindingFlags, BorderAction, BorderStyle, ColorConfig,
+    Config, Direction, ExecCommand, FloatingAction, FocusFollowsMouse, FullscreenAction,
+    HideEdgeBorders, InputConfig, Keybinding, LayoutType, ModeBlock, Modifier, OpacityAction,
+    OutputBackground, OutputConfig, ResizeAxis, ResizeUnit, SeatConfig, SplitDirection,
+    StickyAction, WindowCriteria, WindowRule, WindowRuleAction, WorkspaceConfig,
 };
 
 // ════════════════════════════════════════════════════════════
@@ -55,6 +57,18 @@ struct Parser<'a> {
     input: &'a str,
 }
 
+// ── 块上下文（花括号块解析） ──────────────────────────────────
+
+enum BlockContext {
+    Mode(ModeBlock),
+    Bar(BarConfig),
+    Input {
+        identifier: String,
+        settings: HashMap<String, String>,
+    },
+    Unknown,
+}
+
 impl<'a> Parser<'a> {
     fn new(input: &'a str) -> Self {
         Parser { input }
@@ -62,24 +76,44 @@ impl<'a> Parser<'a> {
 
     fn parse(self) -> Result<Config, ParseError> {
         let mut config = Config::default();
+        let mut block: Option<BlockContext> = None;
 
         for (line_no, raw_line) in self.input.lines().enumerate() {
-            let line_no = line_no + 1; // 行号从 1 开始
+            let line_no = line_no + 1;
 
-            // 去除前导/尾部空白
             let line = raw_line.trim();
 
-            // 空行和注释跳过
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
 
-            // 去除行内注释（# 之后的内容）
             let line = strip_inline_comment(line);
-
-            // 变量替换（$varname -> 已设置的值）
             let substituted = substitute_vars(line, &config.variables);
             let s = substituted.trim();
+
+            // 块结束
+            if s == "}" {
+                if let Some(ctx) = block.take() {
+                    finalize_block(ctx, &mut config);
+                }
+                continue;
+            }
+
+            // 块内容
+            if let Some(ref mut ctx) = block {
+                parse_block_line(s, line_no, ctx, &mut config);
+                continue;
+            }
+
+            // 检测块开始（行尾为 '{'，且首关键字为已知块类型）
+            if let Some(stripped) = s.strip_suffix('{') {
+                let header = stripped.trim();
+                let (keyword, _) = split_first(header);
+                if matches!(keyword, "mode" | "bar" | "input") {
+                    block = Some(open_block(header));
+                    continue;
+                }
+            }
 
             parse_directive(s, line_no, &mut config)?;
         }
@@ -118,9 +152,129 @@ fn parse_directive(line: &str, line_no: usize, config: &mut Config) -> Result<()
             Ok(())
         }
         "focus_follows_mouse" => {
-            config.focus_follows_mouse = matches!(rest.trim(), "yes" | "true" | "1");
+            config.focus_follows_mouse = match rest.trim() {
+                "always" => FocusFollowsMouse::Always,
+                "yes" | "true" | "1" => FocusFollowsMouse::Yes,
+                _ => FocusFollowsMouse::No,
+            };
             Ok(())
         }
+        "default_floating_border" => parse_default_floating_border(rest, line_no, config),
+        "floating_modifier" => {
+            parse_floating_modifier(rest, config);
+            Ok(())
+        }
+        "hide_edge_borders" => {
+            config.hide_edge_borders = match rest.trim() {
+                "vertical" => HideEdgeBorders::Vertical,
+                "horizontal" => HideEdgeBorders::Horizontal,
+                "both" => HideEdgeBorders::Both,
+                "smart" => HideEdgeBorders::Smart,
+                _ => HideEdgeBorders::None,
+            };
+            Ok(())
+        }
+        "smart_borders" => {
+            config.smart_borders = matches!(rest.trim(), "on" | "yes");
+            Ok(())
+        }
+        "smart_gaps" => {
+            config.smart_gaps = matches!(rest.trim(), "on" | "yes");
+            Ok(())
+        }
+        "title_format" => {
+            config.title_format = Some(rest.trim().to_string());
+            Ok(())
+        }
+        "titlebar_border_thickness" => {
+            if let Ok(v) = rest.trim().parse::<u32>() {
+                config.titlebar_border_thickness = Some(v);
+            }
+            Ok(())
+        }
+        "titlebar_padding" => {
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if let Some(h) = parts.first().and_then(|s| s.parse::<u32>().ok()) {
+                let v = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(h);
+                config.titlebar_padding = Some((h, v));
+            }
+            Ok(())
+        }
+        "workspace_auto_back_and_forth" => {
+            config.workspace_auto_back_and_forth = matches!(rest.trim(), "yes" | "on" | "true");
+            Ok(())
+        }
+        "assign" => parse_assign(rest, line_no, config),
+        "mode" => parse_mode(rest, line_no, config),
+        "bindcode" => parse_bindcode(rest, line_no, config),
+        "unbindsym" => parse_unbindsym(rest, config),
+        "seat" => parse_seat(rest, config),
+        "default_orientation" => {
+            config.default_orientation = Some(rest.trim().to_string());
+            Ok(())
+        }
+        "workspace_layout" => {
+            config.workspace_layout = Some(rest.trim().to_string());
+            Ok(())
+        }
+        "xwayland" => {
+            config.xwayland = Some(rest.trim().to_string());
+            Ok(())
+        }
+        "swaybg_command" => {
+            config.swaybg_command = Some(rest.to_string());
+            Ok(())
+        }
+        "swaynag_command" => {
+            config.swaynag_command = Some(rest.to_string());
+            Ok(())
+        }
+        "mouse_warping" => {
+            config.mouse_warping = Some(rest.trim().to_string());
+            Ok(())
+        }
+        "focus_wrapping" => {
+            config.focus_wrapping = Some(rest.trim().to_string());
+            Ok(())
+        }
+        "focus_on_window_activation" => {
+            config.focus_on_window_activation = Some(rest.trim().to_string());
+            Ok(())
+        }
+        "popup_during_fullscreen" => {
+            config.popup_during_fullscreen = Some(rest.trim().to_string());
+            Ok(())
+        }
+        "show_marks" => {
+            config.show_marks = Some(matches!(rest.trim(), "yes" | "true" | "1"));
+            Ok(())
+        }
+        "tiling_drag" => {
+            config.tiling_drag = Some(rest.trim().to_string());
+            Ok(())
+        }
+        "title_align" => {
+            config.title_align = Some(rest.trim().to_string());
+            Ok(())
+        }
+        "floating_maximum_size" => {
+            if let Some(size) = parse_size_spec(rest.trim()) {
+                config.floating_maximum_size = Some(size);
+            }
+            Ok(())
+        }
+        "floating_minimum_size" => {
+            if let Some(size) = parse_size_spec(rest.trim()) {
+                config.floating_minimum_size = Some(size);
+            }
+            Ok(())
+        }
+        "no_focus" => parse_no_focus(rest, line_no, config),
+        "include" => {
+            config.includes.push(rest.trim().to_string());
+            Ok(())
+        }
+        s if s.starts_with("client.") => parse_client_color(keyword, rest, config),
         // 未知指令：忽略（宽容解析，保持 sway 兼容性）
         _ => Ok(()),
     }
@@ -158,10 +312,25 @@ fn parse_set(rest: &str, line_no: usize, config: &mut Config) -> Result<(), Pars
     Ok(())
 }
 
-/// 解析 `bindsym <modifiers+key> <action...>`
+/// 解析 `bindsym [--flags...] <modifiers+key> <action...>`
 fn parse_bindsym(rest: &str, line_no: usize, config: &mut Config) -> Result<(), ParseError> {
     let rest = rest.trim();
-    let (combo, action_str) = split_first(rest);
+
+    // 解析绑定标志（--release, --locked, --whole-window, --no-repeat）
+    let mut flags = BindingFlags::default();
+    let mut remaining = rest;
+    loop {
+        let (tok, after) = split_first(remaining);
+        match tok {
+            "--release" => { flags.release = true; remaining = after; }
+            "--locked" => { flags.locked = true; remaining = after; }
+            "--whole-window" => { flags.whole_window = true; remaining = after; }
+            "--no-repeat" => { flags.no_repeat = true; remaining = after; }
+            _ => break,
+        }
+    }
+
+    let (combo, action_str) = split_first(remaining);
     if combo.is_empty() {
         return Err(ParseError::Syntax {
             line: line_no,
@@ -172,7 +341,7 @@ fn parse_bindsym(rest: &str, line_no: usize, config: &mut Config) -> Result<(), 
     let (modifiers, key) = parse_key_combo(combo);
     let action = parse_action(action_str.trim());
 
-    config.keybindings.push(Keybinding { modifiers, key, action });
+    config.keybindings.push(Keybinding { modifiers, key, action, flags });
     Ok(())
 }
 
@@ -217,7 +386,12 @@ fn parse_action(s: &str) -> Action {
     match verb {
         "exec" => Action::Exec(rest.trim().to_string()),
         "focus" => {
-            if let Some(dir) = str_to_direction(rest.trim()) {
+            let arg = rest.trim();
+            if arg == "parent" {
+                Action::FocusParent
+            } else if arg == "child" {
+                Action::FocusChild
+            } else if let Some(dir) = str_to_direction(arg) {
                 Action::Focus(dir)
             } else {
                 Action::Raw(s.to_string())
@@ -235,17 +409,48 @@ fn parse_action(s: &str) -> Action {
             }
         }
         "layout" => parse_layout_action(rest.trim()),
-        "fullscreen" => Action::Fullscreen,
-        "floating" => {
-            if rest.trim() == "toggle" {
-                Action::ToggleFloating
-            } else {
-                Action::Raw(s.to_string())
+        "fullscreen" => {
+            match rest.trim() {
+                "enable" => Action::Fullscreen(FullscreenAction::Enable),
+                "disable" => Action::Fullscreen(FullscreenAction::Disable),
+                _ => Action::Fullscreen(FullscreenAction::Toggle),
             }
         }
+        "floating" => {
+            match rest.trim() {
+                "enable" => Action::Floating(FloatingAction::Enable),
+                "disable" => Action::Floating(FloatingAction::Disable),
+                "toggle" => Action::Floating(FloatingAction::Toggle),
+                _ => Action::Raw(s.to_string()),
+            }
+        }
+        "resize" => parse_resize_action(rest.trim()),
+        "border" => parse_border_action(rest.trim()),
+        "opacity" => parse_opacity_action(rest.trim()),
+        "sticky" => {
+            match rest.trim() {
+                "enable" => Action::Sticky(StickyAction::Enable),
+                "disable" => Action::Sticky(StickyAction::Disable),
+                "toggle" => Action::Sticky(StickyAction::Toggle),
+                _ => Action::Raw(s.to_string()),
+            }
+        }
+        "mark" => {
+            let name = rest.trim().trim_start_matches("--add").trim();
+            Action::Mark { name: name.to_string(), add: rest.contains("--add") }
+        }
+        "unmark" => {
+            let name = rest.trim();
+            Action::Unmark(if name.is_empty() { None } else { Some(name.to_string()) })
+        }
+        "swap" => Action::SwapContainer,
+        "nop" => Action::Nop(rest.trim().to_string()),
         "kill" => Action::Kill,
         "reload" => Action::Reload,
         "exit" => Action::Exit,
+        "scratchpad" => {
+            if rest.trim() == "show" { Action::ScratchpadShow } else { Action::Raw(s.to_string()) }
+        }
         _ => Action::Raw(s.to_string()),
     }
 }
@@ -270,11 +475,59 @@ fn parse_move_action(rest: &str) -> Action {
             Action::Raw(format!("move {rest}"))
         }
         "to" => {
-            // `move to workspace number 1`
+            // `move to workspace number 1` or `move to scratchpad`
             let (ws_kw, ws_name) = split_first(remainder.trim());
             if ws_kw == "workspace" {
                 let name = normalize_workspace_name(ws_name.trim());
                 Action::MoveToWorkspace(name)
+            } else if ws_kw == "scratchpad" {
+                Action::MoveToScratchpad
+            } else {
+                Action::Raw(format!("move {rest}"))
+            }
+        }
+        "position" => {
+            let remainder = remainder.trim();
+            if remainder == "center" {
+                Action::MoveCenter
+            } else {
+                let parts: Vec<&str> = remainder.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    if let (Ok(x), Ok(y)) = (
+                        parts[0].trim_end_matches("px").parse::<i32>(),
+                        parts[1].trim_end_matches("px").parse::<i32>(),
+                    ) {
+                        Action::MovePosition { x, y }
+                    } else {
+                        Action::Raw(format!("move {rest}"))
+                    }
+                } else {
+                    Action::Raw(format!("move {rest}"))
+                }
+            }
+        }
+        "absolute" => {
+            // `move absolute position x y`
+            let (kw, coords) = split_first(remainder.trim());
+            if kw == "position" {
+                let coords = coords.trim();
+                if coords == "center" {
+                    Action::MoveCenter
+                } else {
+                    let parts: Vec<&str> = coords.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        if let (Ok(x), Ok(y)) = (
+                            parts[0].trim_end_matches("px").parse::<i32>(),
+                            parts[1].trim_end_matches("px").parse::<i32>(),
+                        ) {
+                            Action::MovePosition { x, y }
+                        } else {
+                            Action::Raw(format!("move {rest}"))
+                        }
+                    } else {
+                        Action::Raw(format!("move {rest}"))
+                    }
+                }
             } else {
                 Action::Raw(format!("move {rest}"))
             }
@@ -308,6 +561,118 @@ fn parse_layout_action(rest: &str) -> Action {
     }
 }
 
+fn parse_resize_action(rest: &str) -> Action {
+    // resize set <w> [px|ppt] <h> [px|ppt]
+    let (grow_shrink, remainder) = split_first(rest);
+    if grow_shrink == "set" {
+        let parts: Vec<&str> = remainder.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let w = parts[0].trim_end_matches("px").trim_end_matches("ppt").parse::<i32>();
+            let h_idx = if parts.len() > 2 && (parts[1] == "px" || parts[1] == "ppt") { 2 } else { 1 };
+            let h = parts.get(h_idx).and_then(|s| s.trim_end_matches("px").trim_end_matches("ppt").parse::<i32>().ok());
+            if let (Ok(w), Some(h)) = (w, h) {
+                return Action::ResizeSet { width: w, height: h };
+            }
+        }
+        return Action::Raw(format!("resize {rest}"));
+    }
+
+    // resize shrink|grow width|height [amount [px|ppt]]
+    let grow = match grow_shrink {
+        "grow" => true,
+        "shrink" => false,
+        _ => return Action::Raw(format!("resize {rest}")),
+    };
+
+    let (axis_str, remainder) = split_first(remainder.trim());
+    let axis = match axis_str {
+        "width" => ResizeAxis::Width,
+        "height" => ResizeAxis::Height,
+        _ => return Action::Raw(format!("resize {rest}")),
+    };
+
+    let remainder = remainder.trim();
+    if remainder.is_empty() {
+        return Action::Resize { grow, axis, amount: 10, unit: ResizeUnit::Ppt };
+    }
+
+    let (amount_str, unit_str) = split_first(remainder);
+    let amount = match amount_str.parse::<i32>() {
+        Ok(v) => v,
+        Err(_) => return Action::Raw(format!("resize {rest}")),
+    };
+
+    let unit = match unit_str.trim() {
+        "px" => ResizeUnit::Px,
+        "ppt" => ResizeUnit::Ppt,
+        "" => ResizeUnit::Px,
+        _ => ResizeUnit::Px,
+    };
+
+    Action::Resize { grow, axis, amount, unit }
+}
+
+fn parse_border_action(rest: &str) -> Action {
+    match rest {
+        "none" => Action::Border(BorderAction::None),
+        "toggle" => Action::Border(BorderAction::Toggle),
+        _ => {
+            let (style, width_str) = split_first(rest);
+            let width = width_str.trim().parse::<u32>().unwrap_or(2);
+            match style {
+                "normal" => Action::Border(BorderAction::Normal(width)),
+                "pixel" => Action::Border(BorderAction::Pixel(width)),
+                _ => Action::Raw(format!("border {rest}")),
+            }
+        }
+    }
+}
+
+fn parse_opacity_action(rest: &str) -> Action {
+    let (sub, val_str) = split_first(rest);
+    match sub {
+        "set" => {
+            if let Ok(v) = val_str.trim().parse::<f64>() {
+                Action::Opacity(OpacityAction::Set(v))
+            } else {
+                Action::Raw(format!("opacity {rest}"))
+            }
+        }
+        "plus" => {
+            if let Ok(v) = val_str.trim().parse::<f64>() {
+                Action::Opacity(OpacityAction::Plus(v))
+            } else {
+                Action::Raw(format!("opacity {rest}"))
+            }
+        }
+        "minus" => {
+            if let Ok(v) = val_str.trim().parse::<f64>() {
+                Action::Opacity(OpacityAction::Minus(v))
+            } else {
+                Action::Raw(format!("opacity {rest}"))
+            }
+        }
+        _ => {
+            // 直接数值 = set
+            if let Ok(v) = sub.parse::<f64>() {
+                Action::Opacity(OpacityAction::Set(v))
+            } else {
+                Action::Raw(format!("opacity {rest}"))
+            }
+        }
+    }
+}
+
+fn parse_floating_modifier(rest: &str, config: &mut Config) {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    if let Some(mod_str) = parts.first() {
+        if let Some(modifier) = str_to_modifier(mod_str) {
+            config.floating_modifier = Some(modifier);
+            config.floating_modifier_inverse = parts.get(1) == Some(&"inverse");
+        }
+    }
+}
+
 fn str_to_direction(s: &str) -> Option<Direction> {
     match s {
         "left" => Some(Direction::Left),
@@ -333,6 +698,16 @@ fn parse_output(rest: &str, _line_no: usize, config: &mut Config) -> Result<(), 
         position: None,
         scale: None,
         transform: None,
+        enable: None,
+        power: None,
+        dpms: None,
+        bg: None,
+        scale_filter: None,
+        adaptive_sync: None,
+        subpixel: None,
+        max_render_time: None,
+        color_profile: None,
+        allow_tearing: None,
     };
 
     let mut tokens = props.split_whitespace().peekable();
@@ -363,6 +738,61 @@ fn parse_output(rest: &str, _line_no: usize, config: &mut Config) -> Result<(), 
             "transform" => {
                 if let Some(t) = tokens.next() {
                     out.transform = Some(t.to_string());
+                }
+            }
+            "enable" => out.enable = Some(true),
+            "disable" => out.enable = Some(false),
+            "power" => {
+                if let Some(v) = tokens.next() {
+                    out.power = Some(v == "on");
+                }
+            }
+            "dpms" => {
+                if let Some(v) = tokens.next() {
+                    out.dpms = Some(v == "on");
+                }
+            }
+            "bg" => {
+                if let Some(source) = tokens.next() {
+                    let mode = tokens.next().unwrap_or("fill").to_string();
+                    out.bg = Some(OutputBackground {
+                        source: source.to_string(),
+                        mode,
+                    });
+                }
+            }
+            "scale_filter" => {
+                if let Some(v) = tokens.next() {
+                    out.scale_filter = Some(v.to_string());
+                }
+            }
+            "adaptive_sync" => {
+                if let Some(v) = tokens.next() {
+                    out.adaptive_sync = Some(v == "on" || v == "enabled");
+                }
+            }
+            "subpixel" => {
+                if let Some(v) = tokens.next() {
+                    out.subpixel = Some(v.to_string());
+                }
+            }
+            "max_render_time" => {
+                if let Some(v) = tokens.next() {
+                    if v == "off" {
+                        out.max_render_time = Some(-1);
+                    } else if let Ok(ms) = v.parse::<i32>() {
+                        out.max_render_time = Some(ms);
+                    }
+                }
+            }
+            "color_profile" => {
+                if let Some(v) = tokens.next() {
+                    out.color_profile = Some(v.to_string());
+                }
+            }
+            "allow_tearing" => {
+                if let Some(v) = tokens.next() {
+                    out.allow_tearing = Some(v == "yes" || v == "on");
                 }
             }
             _ => {} // 跳过未知属性
@@ -553,10 +983,10 @@ fn parse_window_criteria(s: &str) -> WindowCriteria {
         let key = remaining[..eq_pos].trim();
         remaining = remaining[eq_pos + 1..].trim_start();
 
-        let (value, after) = if remaining.starts_with('"') {
+        let (value, after) = if let Some(stripped) = remaining.strip_prefix('"') {
             // 带引号的值
-            let end = remaining[1..].find('"').map(|i| i + 1).unwrap_or(remaining.len() - 1);
-            (&remaining[1..end], remaining[end + 1..].trim_start())
+            let end = stripped.find('"').unwrap_or(stripped.len());
+            (&stripped[..end], stripped[end..].strip_prefix('"').unwrap_or(&stripped[end..]).trim_start())
         } else {
             // 无引号：取到下一个空格
             let end = remaining.find(char::is_whitespace).unwrap_or(remaining.len());
@@ -662,6 +1092,351 @@ fn parse_workspace(rest: &str, _line_no: usize, config: &mut Config) -> Result<(
     Ok(())
 }
 
+/// 解析 `default_floating_border normal|pixel <n>|none`
+fn parse_default_floating_border(
+    rest: &str,
+    line_no: usize,
+    config: &mut Config,
+) -> Result<(), ParseError> {
+    let (style, width_str) = split_first(rest.trim());
+    match style {
+        "none" => config.default_floating_border = BorderStyle::None,
+        "normal" => {
+            let w = if width_str.trim().is_empty() {
+                2
+            } else {
+                width_str
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| ParseError::InvalidNumber(width_str.trim().to_string()))?
+            };
+            config.default_floating_border = BorderStyle::Normal(w);
+        }
+        "pixel" => {
+            let w = if width_str.trim().is_empty() {
+                2
+            } else {
+                width_str
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| ParseError::InvalidNumber(width_str.trim().to_string()))?
+            };
+            config.default_floating_border = BorderStyle::Pixel(w);
+        }
+        _ => {
+            return Err(ParseError::Syntax {
+                line: line_no,
+                message: format!("未知的浮动边框样式: '{style}'"),
+            })
+        }
+    }
+    Ok(())
+}
+
+/// 解析 `client.focused #border #background #text #indicator #child_border`
+fn parse_client_color(
+    keyword: &str,
+    rest: &str,
+    config: &mut Config,
+) -> Result<(), ParseError> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+
+    if keyword == "client.background" {
+        config.client_background = parts.first().map(|s| s.to_string());
+        return Ok(());
+    }
+
+    if parts.len() < 5 {
+        // 宽容解析：不够 5 个颜色时用空串填充
+        let get = |i: usize| parts.get(i).unwrap_or(&"").to_string();
+        let cc = ColorConfig {
+            border: get(0),
+            background: get(1),
+            text: get(2),
+            indicator: get(3),
+            child_border: get(4),
+        };
+        match keyword {
+            "client.focused" => config.client_focused = Some(cc),
+            "client.unfocused" => config.client_unfocused = Some(cc),
+            "client.focused_inactive" => config.client_focused_inactive = Some(cc),
+            "client.urgent" => config.client_urgent = Some(cc),
+            "client.placeholder" => config.client_placeholder = Some(cc),
+            _ => {}
+        }
+        return Ok(());
+    }
+
+    let cc = ColorConfig {
+        border: parts[0].to_string(),
+        background: parts[1].to_string(),
+        text: parts[2].to_string(),
+        indicator: parts[3].to_string(),
+        child_border: parts[4].to_string(),
+    };
+
+    match keyword {
+        "client.focused" => config.client_focused = Some(cc),
+        "client.unfocused" => config.client_unfocused = Some(cc),
+        "client.focused_inactive" => config.client_focused_inactive = Some(cc),
+        "client.urgent" => config.client_urgent = Some(cc),
+        "client.placeholder" => config.client_placeholder = Some(cc),
+        _ => {}
+    }
+    Ok(())
+}
+
+/// 解析 `assign [criteria] workspace <name>`
+fn parse_assign(rest: &str, line_no: usize, config: &mut Config) -> Result<(), ParseError> {
+    let rest = rest.trim();
+    if !rest.starts_with('[') {
+        return Ok(());
+    }
+    let end = rest.find(']').ok_or_else(|| ParseError::Syntax {
+        line: line_no,
+        message: "assign 条件块缺少 ]".to_string(),
+    })?;
+    let criteria_str = &rest[1..end];
+    let action_str = rest[end + 1..].trim();
+    let criteria = parse_window_criteria(criteria_str);
+
+    // `workspace <name>` 或直接 `<name>`
+    let (kw, ws_name) = split_first(action_str);
+    let workspace = if kw == "workspace" {
+        normalize_workspace_name(ws_name.trim())
+    } else {
+        kw.to_string()
+    };
+
+    config.assigns.push(AssignRule { criteria, workspace });
+    Ok(())
+}
+
+/// 解析 `mode "name" { ... }` — 简化版：收集模式名和绑定
+fn parse_mode(rest: &str, _line_no: usize, config: &mut Config) -> Result<(), ParseError> {
+    let rest = rest.trim();
+    let (name, _body) = parse_quoted_or_plain(rest);
+    if name.is_empty() {
+        return Ok(());
+    }
+    // 简化：只注册模式名，不解析内部绑定（需要多行解析支持）
+    if !config.modes.iter().any(|m| m.name == name) {
+        config.modes.push(ModeBlock {
+            name,
+            keybindings: Vec::new(),
+        });
+    }
+    Ok(())
+}
+
+/// 解析 `bindcode [--flags] <code> <action>`
+fn parse_bindcode(rest: &str, _line_no: usize, config: &mut Config) -> Result<(), ParseError> {
+    let rest = rest.trim();
+
+    let mut flags = BindingFlags::default();
+    let mut remaining = rest;
+    loop {
+        let (tok, after) = split_first(remaining);
+        match tok {
+            "--release" => { flags.release = true; remaining = after; }
+            "--locked" => { flags.locked = true; remaining = after; }
+            _ => break,
+        }
+    }
+
+    let (code_str, action_str) = split_first(remaining);
+    let code = match code_str.parse::<u32>() {
+        Ok(c) => c,
+        Err(_) => return Ok(()), // 宽容解析
+    };
+    let action = parse_action(action_str.trim());
+    config.bindcodes.push(Bindcode {
+        modifiers: Vec::new(),
+        code,
+        action,
+        flags,
+    });
+    Ok(())
+}
+
+/// 解析 `unbindsym <combo>`
+fn parse_unbindsym(rest: &str, config: &mut Config) -> Result<(), ParseError> {
+    let rest = rest.trim();
+    let (combo, _) = split_first(rest);
+    let (modifiers, key) = parse_key_combo(combo);
+    // 从绑定列表中移除匹配的绑定
+    config.keybindings.retain(|kb| !(kb.key == key && kb.modifiers == modifiers));
+    Ok(())
+}
+
+// ════════════════════════════════════════════════════════════
+// 块解析
+// ════════════════════════════════════════════════════════════
+
+fn open_block(header: &str) -> BlockContext {
+    let (keyword, rest) = split_first(header);
+    match keyword {
+        "bar" => BlockContext::Bar(BarConfig::default()),
+        "mode" => {
+            let (name, _) = parse_quoted_or_plain(rest);
+            BlockContext::Mode(ModeBlock {
+                name,
+                keybindings: Vec::new(),
+            })
+        }
+        "input" => {
+            let (identifier, _) = parse_quoted_or_plain(rest);
+            BlockContext::Input {
+                identifier,
+                settings: HashMap::new(),
+            }
+        }
+        _ => BlockContext::Unknown,
+    }
+}
+
+fn parse_block_line(line: &str, line_no: usize, ctx: &mut BlockContext, config: &mut Config) {
+    match ctx {
+        BlockContext::Unknown => {}
+        BlockContext::Mode(ref mut mode) => {
+            // 解析 mode 块内的 bindsym
+            let (kw, rest) = split_first(line);
+            if kw == "bindsym" {
+                if let Ok(()) = parse_bindsym_into(rest, line_no, &mut mode.keybindings) {}
+            }
+        }
+        BlockContext::Bar(ref mut bar) => {
+            let (key, value) = split_first(line);
+            match key {
+                "status_command" => bar.status_command = Some(value.to_string()),
+                "position" => bar.position = Some(value.to_string()),
+                _ => {} // 忽略未知 bar 指令
+            }
+        }
+        BlockContext::Input { ref mut settings, .. } => {
+            let (key, value) = split_first(line);
+            if !key.is_empty() && !value.is_empty() {
+                settings.insert(key.to_string(), value.to_string());
+            }
+        }
+    }
+    let _ = (line_no, config); // 保留参数供未来使用
+}
+
+fn finalize_block(ctx: BlockContext, config: &mut Config) {
+    match ctx {
+        BlockContext::Unknown => {}
+        BlockContext::Mode(mode) => {
+            if !config.modes.iter().any(|m| m.name == mode.name) {
+                config.modes.push(mode);
+            }
+        }
+        BlockContext::Bar(bar) => {
+            config.bar = Some(bar);
+        }
+        BlockContext::Input { identifier, settings } => {
+            if let Some(existing) = config.inputs.iter_mut().find(|i| i.identifier == identifier) {
+                existing.settings.extend(settings);
+            } else {
+                config.inputs.push(InputConfig { identifier, settings });
+            }
+        }
+    }
+}
+
+/// 解析 bindsym 到指定的 keybindings 列表（用于 mode 块）
+fn parse_bindsym_into(
+    rest: &str,
+    _line_no: usize,
+    keybindings: &mut Vec<Keybinding>,
+) -> Result<(), ParseError> {
+    let rest = rest.trim();
+    let mut flags = BindingFlags::default();
+    let mut remaining = rest;
+    loop {
+        let (tok, after) = split_first(remaining);
+        match tok {
+            "--release" => { flags.release = true; remaining = after; }
+            "--locked" => { flags.locked = true; remaining = after; }
+            "--whole-window" => { flags.whole_window = true; remaining = after; }
+            "--no-repeat" => { flags.no_repeat = true; remaining = after; }
+            _ => break,
+        }
+    }
+    let (combo, action_str) = split_first(remaining);
+    if combo.is_empty() {
+        return Ok(());
+    }
+    let (modifiers, key) = parse_key_combo(combo);
+    let action = parse_action(action_str.trim());
+    keybindings.push(Keybinding { modifiers, key, action, flags });
+    Ok(())
+}
+
+/// 解析尺寸规格 `<w> x <h>` 或 `<w>x<h>`
+fn parse_size_spec(s: &str) -> Option<(i32, i32)> {
+    let parts: Vec<&str> = s.split_whitespace().collect();
+    if parts.len() == 3 && parts[1] == "x" {
+        let w = parts[0].parse::<i32>().ok()?;
+        let h = parts[2].parse::<i32>().ok()?;
+        Some((w, h))
+    } else if parts.len() == 1 {
+        let xy: Vec<&str> = parts[0].split('x').collect();
+        if xy.len() == 2 {
+            let w = xy[0].parse::<i32>().ok()?;
+            let h = xy[1].parse::<i32>().ok()?;
+            Some((w, h))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// 解析 `no_focus [criteria]`
+fn parse_no_focus(rest: &str, line_no: usize, config: &mut Config) -> Result<(), ParseError> {
+    let rest = rest.trim();
+    if !rest.starts_with('[') {
+        return Err(ParseError::Syntax {
+            line: line_no,
+            message: "no_focus 需要以 [ 开头的条件块".to_string(),
+        });
+    }
+    let end = rest.find(']').ok_or_else(|| ParseError::Syntax {
+        line: line_no,
+        message: "no_focus 条件块缺少 ]".to_string(),
+    })?;
+    let criteria_str = &rest[1..end];
+    let criteria = parse_window_criteria(criteria_str);
+    config.no_focus_rules.push(criteria);
+    Ok(())
+}
+
+/// 解析 `seat <name> <key> <value>`
+fn parse_seat(rest: &str, config: &mut Config) -> Result<(), ParseError> {
+    let rest = rest.trim();
+    let (name, props) = parse_quoted_or_plain(rest);
+    if name.is_empty() {
+        return Ok(());
+    }
+
+    let mut settings = std::collections::HashMap::new();
+    let mut tokens = props.split_whitespace();
+    while let Some(k) = tokens.next() {
+        if let Some(v) = tokens.next() {
+            settings.insert(k.to_string(), v.to_string());
+        }
+    }
+
+    if let Some(existing) = config.seat_configs.iter_mut().find(|s| s.name == name) {
+        existing.settings.extend(settings);
+    } else {
+        config.seat_configs.push(SeatConfig { name, settings });
+    }
+    Ok(())
+}
+
 // ════════════════════════════════════════════════════════════
 // 工具函数
 // ════════════════════════════════════════════════════════════
@@ -679,6 +1454,7 @@ fn split_first(s: &str) -> (&str, &str) {
 fn strip_inline_comment(line: &str) -> &str {
     let mut in_quote = false;
     let mut quote_char = '"';
+    let bytes = line.as_bytes();
     for (i, ch) in line.char_indices() {
         match ch {
             '"' | '\'' if !in_quote => {
@@ -689,7 +1465,14 @@ fn strip_inline_comment(line: &str) -> &str {
                 in_quote = false;
             }
             '#' if !in_quote => {
-                return line[..i].trim_end();
+                // 只有当 '#' 前面是空白（或行首）且后面不是十六进制数字时，才当作注释。
+                // 这样可以保留 `#ffffff` 形式的颜色值。
+                let preceded_by_space = i == 0 || bytes[i - 1].is_ascii_whitespace();
+                let followed_by_hex = i + 1 < bytes.len()
+                    && bytes[i + 1].is_ascii_hexdigit();
+                if preceded_by_space && !followed_by_hex {
+                    return line[..i].trim_end();
+                }
             }
             _ => {}
         }
@@ -700,11 +1483,11 @@ fn strip_inline_comment(line: &str) -> &str {
 /// 解析可选带引号的第一个词
 fn parse_quoted_or_plain(s: &str) -> (String, &str) {
     let s = s.trim();
-    if s.starts_with('"') {
+    if let Some(stripped) = s.strip_prefix('"') {
         // 带双引号
-        if let Some(end) = s[1..].find('"') {
-            let identifier = s[1..end + 1].to_string();
-            let rest = s[end + 2..].trim_start();
+        if let Some(end) = stripped.find('"') {
+            let identifier = stripped[..end].to_string();
+            let rest = stripped[end + 1..].trim_start();
             return (identifier, rest);
         }
     }
@@ -961,13 +1744,13 @@ mod tests {
     #[test]
     fn bindsym_fullscreen() {
         let cfg = parse_ok!("bindsym Mod4+f fullscreen");
-        assert_eq!(cfg.keybindings[0].action, Action::Fullscreen);
+        assert_eq!(cfg.keybindings[0].action, Action::Fullscreen(FullscreenAction::Toggle));
     }
 
     #[test]
     fn bindsym_floating_toggle() {
         let cfg = parse_ok!("bindsym Mod4+Shift+space floating toggle");
-        assert_eq!(cfg.keybindings[0].action, Action::ToggleFloating);
+        assert_eq!(cfg.keybindings[0].action, Action::Floating(FloatingAction::Toggle));
     }
 
     #[test]
@@ -1261,25 +2044,25 @@ mod tests {
     #[test]
     fn focus_follows_mouse_yes() {
         let cfg = parse_ok!("focus_follows_mouse yes");
-        assert!(cfg.focus_follows_mouse);
+        assert_eq!(cfg.focus_follows_mouse, FocusFollowsMouse::Yes);
     }
 
     #[test]
     fn focus_follows_mouse_no() {
         let cfg = parse_ok!("focus_follows_mouse no");
-        assert!(!cfg.focus_follows_mouse);
+        assert_eq!(cfg.focus_follows_mouse, FocusFollowsMouse::No);
     }
 
     #[test]
     fn focus_follows_mouse_true() {
         let cfg = parse_ok!("focus_follows_mouse true");
-        assert!(cfg.focus_follows_mouse);
+        assert_eq!(cfg.focus_follows_mouse, FocusFollowsMouse::Yes);
     }
 
     #[test]
     fn focus_follows_mouse_1() {
         let cfg = parse_ok!("focus_follows_mouse 1");
-        assert!(cfg.focus_follows_mouse);
+        assert_eq!(cfg.focus_follows_mouse, FocusFollowsMouse::Yes);
     }
 
     // ════════════════════════════════════════════════════════
@@ -1475,7 +2258,7 @@ focus_follows_mouse yes
 
         // 验证字体和焦点
         assert_eq!(cfg.font.as_deref(), Some("pango:monospace 10"));
-        assert!(cfg.focus_follows_mouse);
+        assert_eq!(cfg.focus_follows_mouse, FocusFollowsMouse::Yes);
     }
 
     // ════════════════════════════════════════════════════════
@@ -1492,8 +2275,8 @@ focus_follows_mouse yes
     #[test]
     fn mixed_case_focus_follows_mouse() {
         let cfg = parse_ok!("focus_follows_mouse YES");
-        // "YES" 不在匹配列表中，应为 false（严格匹配）
-        assert!(!cfg.focus_follows_mouse);
+        // "YES" 不在匹配列表中，应为 No（严格匹配）
+        assert_eq!(cfg.focus_follows_mouse, FocusFollowsMouse::No);
     }
 
     #[test]

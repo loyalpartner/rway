@@ -43,6 +43,32 @@ pub enum LayoutType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum FloatingAction {
+    Enable,
+    Disable,
+    Toggle,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FullscreenAction {
+    Enable,
+    Disable,
+    Toggle,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResizeAxis {
+    Width,
+    Height,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResizeUnit {
+    Px,
+    Ppt,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     Exec(String),
     Focus(Direction),
@@ -51,29 +77,108 @@ pub enum Action {
     MoveToWorkspace(String),
     Split(SplitDirection),
     Layout(LayoutType),
-    ToggleFloating,
-    Fullscreen,
+    Floating(FloatingAction),
+    Fullscreen(FullscreenAction),
+    FocusParent,
+    FocusChild,
+    Resize {
+        grow: bool,
+        axis: ResizeAxis,
+        amount: i32,
+        unit: ResizeUnit,
+    },
     Kill,
     Reload,
     Exit,
+    /// 边框样式变更
+    Border(BorderAction),
+    /// 透明度
+    Opacity(OpacityAction),
+    /// 精确设置大小
+    ResizeSet { width: i32, height: i32 },
+    /// 移动到绝对位置
+    MovePosition { x: i32, y: i32 },
+    /// 移动到屏幕中央
+    MoveCenter,
+    /// 粘滞窗口
+    Sticky(StickyAction),
+    /// 标记窗口
+    Mark { name: String, add: bool },
+    /// 取消标记
+    Unmark(Option<String>),
+    /// 移动到 scratchpad
+    MoveToScratchpad,
+    /// 显示 scratchpad
+    ScratchpadShow,
+    /// 交换容器
+    SwapContainer,
+    /// 空操作（注释用）
+    Nop(String),
+    /// 模式切换
+    Mode(String),
     /// 未识别的指令原样透传
     Raw(String),
+}
+
+// ────────────────────────────────────────────────────────────
+// 动作子类型
+// ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BorderAction {
+    None,
+    Normal(u32),
+    Pixel(u32),
+    Toggle,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum OpacityAction {
+    Set(f64),
+    Plus(f64),
+    Minus(f64),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StickyAction {
+    Enable,
+    Disable,
+    Toggle,
 }
 
 // ────────────────────────────────────────────────────────────
 // 按键绑定
 // ────────────────────────────────────────────────────────────
 
+// ────────────────────────────────────────────────────────────
+// 绑定标志
+// ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BindingFlags {
+    pub release: bool,
+    pub locked: bool,
+    pub whole_window: bool,
+    pub no_repeat: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Keybinding {
     pub modifiers: Vec<Modifier>,
     pub key: String,
     pub action: Action,
+    pub flags: BindingFlags,
 }
 
 // ────────────────────────────────────────────────────────────
 // 输出配置
 // ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct OutputBackground {
+    pub source: String,
+    pub mode: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct OutputConfig {
@@ -83,6 +188,16 @@ pub struct OutputConfig {
     pub position: Option<(i32, i32)>,
     pub scale: Option<f64>,
     pub transform: Option<String>,
+    pub enable: Option<bool>,
+    pub power: Option<bool>,
+    pub dpms: Option<bool>,
+    pub bg: Option<OutputBackground>,
+    pub scale_filter: Option<String>,
+    pub adaptive_sync: Option<bool>,
+    pub subpixel: Option<String>,
+    pub max_render_time: Option<i32>,
+    pub color_profile: Option<String>,
+    pub allow_tearing: Option<bool>,
 }
 
 // ────────────────────────────────────────────────────────────
@@ -119,17 +234,12 @@ pub enum BorderStyle {
 // 间距配置
 // ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct GapsConfig {
     pub inner: u32,
     pub outer: u32,
 }
 
-impl Default for GapsConfig {
-    fn default() -> Self {
-        GapsConfig { inner: 0, outer: 0 }
-    }
-}
 
 // ────────────────────────────────────────────────────────────
 // 窗口规则
@@ -168,6 +278,102 @@ pub struct WorkspaceConfig {
 }
 
 // ────────────────────────────────────────────────────────────
+// 颜色配置
+// ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColorConfig {
+    pub border: String,
+    pub background: String,
+    pub text: String,
+    pub indicator: String,
+    pub child_border: String,
+}
+
+// ────────────────────────────────────────────────────────────
+// 隐藏边缘边框
+// ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum HideEdgeBorders {
+    None,
+    Vertical,
+    Horizontal,
+    Both,
+    Smart,
+}
+
+// ────────────────────────────────────────────────────────────
+// 模式块
+// ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct ModeBlock {
+    pub name: String,
+    pub keybindings: Vec<Keybinding>,
+}
+
+// ────────────────────────────────────────────────────────────
+// 窗口分配规则
+// ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct AssignRule {
+    pub criteria: WindowCriteria,
+    pub workspace: String,
+}
+
+// ────────────────────────────────────────────────────────────
+// 状态栏配置
+// ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Default)]
+pub struct BarConfig {
+    pub status_command: Option<String>,
+    pub position: Option<String>,
+}
+
+// ────────────────────────────────────────────────────────────
+// Seat 配置
+// ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct SeatConfig {
+    pub name: String,
+    pub settings: HashMap<String, String>,
+}
+
+// ────────────────────────────────────────────────────────────
+// Bindcode 支持
+// ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct Bindcode {
+    pub modifiers: Vec<Modifier>,
+    pub code: u32,
+    pub action: Action,
+    pub flags: BindingFlags,
+}
+
+// ────────────────────────────────────────────────────────────
+// focus_follows_mouse 三态
+// ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FocusFollowsMouse {
+    Yes,
+    No,
+    Always,
+}
+
+impl FocusFollowsMouse {
+    /// yes 和 always 都算"启用"
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, Self::Yes | Self::Always)
+    }
+}
+
+// ────────────────────────────────────────────────────────────
 // 顶层配置
 // ────────────────────────────────────────────────────────────
 
@@ -180,11 +386,48 @@ pub struct Config {
     pub exec: Vec<ExecCommand>,
     pub exec_always: Vec<ExecCommand>,
     pub default_border: BorderStyle,
+    pub default_floating_border: BorderStyle,
     pub gaps: GapsConfig,
-    pub focus_follows_mouse: bool,
+    pub focus_follows_mouse: FocusFollowsMouse,
+    pub floating_modifier: Option<Modifier>,
+    pub floating_modifier_inverse: bool,
     pub window_rules: Vec<WindowRule>,
     pub workspaces: Vec<WorkspaceConfig>,
     pub font: Option<String>,
+    pub hide_edge_borders: HideEdgeBorders,
+    pub smart_borders: bool,
+    pub smart_gaps: bool,
+    pub title_format: Option<String>,
+    pub titlebar_border_thickness: Option<u32>,
+    pub titlebar_padding: Option<(u32, u32)>,
+    pub client_focused: Option<ColorConfig>,
+    pub client_unfocused: Option<ColorConfig>,
+    pub client_focused_inactive: Option<ColorConfig>,
+    pub client_urgent: Option<ColorConfig>,
+    pub client_placeholder: Option<ColorConfig>,
+    pub client_background: Option<String>,
+    pub modes: Vec<ModeBlock>,
+    pub assigns: Vec<AssignRule>,
+    pub workspace_auto_back_and_forth: bool,
+    pub seat_configs: Vec<SeatConfig>,
+    pub bindcodes: Vec<Bindcode>,
+    pub default_orientation: Option<String>,
+    pub workspace_layout: Option<String>,
+    pub xwayland: Option<String>,
+    pub swaybg_command: Option<String>,
+    pub swaynag_command: Option<String>,
+    pub mouse_warping: Option<String>,
+    pub focus_wrapping: Option<String>,
+    pub focus_on_window_activation: Option<String>,
+    pub popup_during_fullscreen: Option<String>,
+    pub show_marks: Option<bool>,
+    pub tiling_drag: Option<String>,
+    pub title_align: Option<String>,
+    pub floating_maximum_size: Option<(i32, i32)>,
+    pub floating_minimum_size: Option<(i32, i32)>,
+    pub no_focus_rules: Vec<WindowCriteria>,
+    pub includes: Vec<String>,
+    pub bar: Option<BarConfig>,
 }
 
 impl Default for Config {
@@ -197,11 +440,48 @@ impl Default for Config {
             exec: Vec::new(),
             exec_always: Vec::new(),
             default_border: BorderStyle::Normal(2),
+            default_floating_border: BorderStyle::Normal(2),
             gaps: GapsConfig::default(),
-            focus_follows_mouse: false,
+            focus_follows_mouse: FocusFollowsMouse::No,
+            floating_modifier: None,
+            floating_modifier_inverse: false,
             window_rules: Vec::new(),
             workspaces: Vec::new(),
             font: None,
+            hide_edge_borders: HideEdgeBorders::None,
+            smart_borders: false,
+            smart_gaps: false,
+            title_format: None,
+            titlebar_border_thickness: None,
+            titlebar_padding: None,
+            client_focused: None,
+            client_unfocused: None,
+            client_focused_inactive: None,
+            client_urgent: None,
+            client_placeholder: None,
+            client_background: None,
+            modes: Vec::new(),
+            assigns: Vec::new(),
+            workspace_auto_back_and_forth: false,
+            seat_configs: Vec::new(),
+            bindcodes: Vec::new(),
+            default_orientation: None,
+            workspace_layout: None,
+            xwayland: None,
+            swaybg_command: None,
+            swaynag_command: None,
+            mouse_warping: None,
+            focus_wrapping: None,
+            focus_on_window_activation: None,
+            popup_during_fullscreen: None,
+            show_marks: None,
+            tiling_drag: None,
+            title_align: None,
+            floating_maximum_size: None,
+            floating_minimum_size: None,
+            no_focus_rules: Vec::new(),
+            includes: Vec::new(),
+            bar: None,
         }
     }
 }
@@ -225,11 +505,13 @@ fn default_keybindings() -> Vec<Keybinding> {
         modifiers: vec![Mod4],
         key: key.to_string(),
         action,
+        flags: BindingFlags::default(),
     };
     let modkey_shift = |key: &str, action: Action| Keybinding {
         modifiers: vec![Mod4, Shift],
         key: key.to_string(),
         action,
+        flags: BindingFlags::default(),
     };
 
     vec![
@@ -276,8 +558,8 @@ fn default_keybindings() -> Vec<Keybinding> {
         modkey("w", Action::Layout(LayoutType::Tabbed)),
         modkey("e", Action::Layout(LayoutType::Toggle)),
         // 全屏 / 浮动
-        modkey("f", Action::Fullscreen),
-        modkey_shift("space", Action::ToggleFloating),
+        modkey("f", Action::Fullscreen(FullscreenAction::Toggle)),
+        modkey_shift("space", Action::Floating(FloatingAction::Toggle)),
         // 系统
         modkey_shift("c", Action::Reload),
         modkey_shift("e", Action::Exit),
@@ -320,9 +602,9 @@ mod tests {
     }
 
     #[test]
-    fn config_default_focus_follows_mouse_is_false() {
+    fn config_default_focus_follows_mouse_is_no() {
         let cfg = Config::default();
-        assert!(!cfg.focus_follows_mouse);
+        assert_eq!(cfg.focus_follows_mouse, FocusFollowsMouse::No);
     }
 
     #[test]

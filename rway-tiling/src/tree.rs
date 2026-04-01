@@ -1,18 +1,12 @@
 // Arena-allocated N-ary tree for i3/Sway-compatible tiling layout
 
 /// 间距配置：控制窗口之间以及窗口与屏幕边缘之间的空白区域
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct GapsConfig {
     /// 相邻窗口之间的间距（像素）
     pub inner: i32,
     /// 窗口与屏幕边缘之间的间距（像素）
     pub outer: i32,
-}
-
-impl Default for GapsConfig {
-    fn default() -> Self {
-        Self { inner: 0, outer: 0 }
-    }
 }
 
 /// 矩形区域，用于描述节点的几何位置与尺寸
@@ -81,6 +75,9 @@ pub enum NodeData {
         window_id: u64,
         floating: bool,
         fullscreen: bool,
+        fullscreen_global: bool,
+        sticky: bool,
+        marks: Vec<String>,
         geometry: Rect,
         /// 进入浮动/全屏前保存的几何信息
         saved_geometry: Option<Rect>,
@@ -103,6 +100,8 @@ pub struct Tree {
     nodes: Vec<Option<Node>>,
     free_list: Vec<NodeId>,
     root: NodeId,
+    /// 当前焦点层级（用于 focus_parent/focus_child），None 表示叶子窗口
+    pub focus_node: Option<NodeId>,
 }
 
 impl Tree {
@@ -118,6 +117,7 @@ impl Tree {
             nodes: vec![Some(root_node)],
             free_list: Vec::new(),
             root: NodeId(0),
+            focus_node: None,
         }
     }
 
@@ -243,6 +243,9 @@ mod tests {
             window_id: id,
             floating: false,
             fullscreen: false,
+            fullscreen_global: false,
+            sticky: false,
+            marks: Vec::new(),
             geometry: Rect::new(0, 0, 0, 0),
             saved_geometry: None,
         }

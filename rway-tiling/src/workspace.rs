@@ -158,6 +158,24 @@ pub fn span_workspace_outputs(
     any_added
 }
 
+/// 重命名工作区。
+pub fn rename_workspace(tree: &mut Tree, old_name: &str, new_name: &str) -> bool {
+    let root = tree.root();
+    for &output_id in tree.children(root).to_vec().iter() {
+        for &ws_id in tree.children(output_id).to_vec().iter() {
+            if let Some(node) = tree.get_mut(ws_id) {
+                if let NodeData::Workspace { ref mut name, .. } = node.data {
+                    if name.as_str() == old_name {
+                        *name = new_name.to_string();
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 // ── 私有辅助 ─────────────────────────────────────────────────
 
 fn find_workspace_by_name(tree: &Tree, name: &str) -> Option<(NodeId, NodeId)> {
