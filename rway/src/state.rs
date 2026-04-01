@@ -31,6 +31,13 @@ use smithay::{
     },
 };
 
+#[cfg(feature = "xwayland")]
+use smithay::wayland::xwayland_shell::XWaylandShellState;
+#[cfg(feature = "xwayland")]
+use smithay::xwayland::X11Wm;
+
+use smithay::utils::IsAlive;
+
 use rway_tiling::{layout, workspace, NodeId, Rect, Tree};
 
 /// rway 合成器的主状态结构体
@@ -68,6 +75,14 @@ pub struct RwayState {
 
     // IPC
     pub ipc_server: Option<rway_ipc::IpcServer>,
+
+    // XWayland 支持（仅在 xwayland feature 启用时使用）
+    #[cfg(feature = "xwayland")]
+    pub xwayland_shell_state: Option<XWaylandShellState>,
+    #[cfg(feature = "xwayland")]
+    pub xwm: Option<X11Wm>,
+    #[cfg(feature = "xwayland")]
+    pub xdisplay: Option<u32>,
 
     // Udev 后端数据（仅在 udev feature 启用时使用）
     #[cfg(feature = "udev")]
@@ -171,6 +186,13 @@ impl RwayState {
             config,
             ipc_server,
 
+            #[cfg(feature = "xwayland")]
+            xwayland_shell_state: None,
+            #[cfg(feature = "xwayland")]
+            xwm: None,
+            #[cfg(feature = "xwayland")]
+            xdisplay: None,
+
             #[cfg(feature = "udev")]
             udev_data: None,
         }
@@ -240,11 +262,11 @@ impl RwayState {
     ///
     /// 应在每帧 `space.refresh()` 之后调用。
     pub fn cleanup_dead_windows(&mut self) {
-        // 收集已死亡的窗口 ID（toplevel 不再存在的窗口视为已关闭）
+        // 收集已死亡的窗口 ID（使用 IsAlive trait 统一判断 Wayland 和 X11 窗口）
         let dead_ids: Vec<u64> = self
             .window_map
             .iter()
-            .filter(|(_, window)| window.toplevel().is_none())
+            .filter(|(_, window)| !window.alive())
             .map(|(id, _)| *id)
             .collect();
 
@@ -321,6 +343,121 @@ impl RwayState {
                 None
             }
         }
+    }
+
+    /// 启动 XWayland 服务器，提供 X11 应用兼容性
+    #[cfg(feature = "xwayland")]
+    pub fn start_xwayland(&mut self) {
+        use std::process::Stdio;
+
+        use smithay::wayland::compositor::CompositorHandler;
+        use smithay::xwayland::{XWayland, XWaylandEvent};
+
+        // 初始化 XWayland Shell 协议状态
+        self.xwayland_shell_state =
+            Some(XWaylandShellState::new::<Self>(&self.display_handle.clone()));
+
+        // 启动 XWayland 进程
+        let (xwayland, client) = match XWayland::spawn(
+            &self.display_handle,
+            None,
+            std::iter::empty::<(String, String)>(),
+            true,
+            Stdio::null(),
+            Stdio::null(),
+            |_| (),
+        ) {
+            Ok(result) => result,
+            Err(e) => {
+                tracing::warn!("启动 XWayland 失败: {}（X11 应用将不可用）", e);
+                return;
+            }
+        };
+
+        // 将 XWayland 事件源注册到事件循环
+        let ret = self
+            .loop_handle
+            .insert_source(xwayland, move |event, _, data| match event {
+                XWaylandEvent::Ready {
+                    x11_socket,
+                    display_number,
+                } => {
+                    // 设置 XWayland 客户端缩放比例
+                    let xwayland_scale = std::env::var("RWAY_XWAYLAND_SCALE")
+                        .ok()
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(1.0);
+                    data.client_compositor_state(&client)
+                        .set_client_scale(xwayland_scale);
+
+                    // 启动 X11 窗口管理器
+                    let mut wm =
+                        match X11Wm::start_wm(data.loop_handle.clone(), x11_socket, client.clone())
+                        {
+                            Ok(wm) => wm,
+                            Err(e) => {
+                                tracing::error!("启动 X11 窗口管理器失败: {}", e);
+                                return;
+                            }
+                        };
+
+                    // 设置 XWayland 默认光标（使用 xcursor 主题）
+                    if let Err(e) = Self::set_xwayland_cursor(&mut wm) {
+                        tracing::warn!("设置 XWayland 光标失败: {}（将使用默认 X 光标）", e);
+                    }
+
+                    data.xwm = Some(wm);
+                    data.xdisplay = Some(display_number);
+
+                    // 设置 DISPLAY 环境变量，以便子进程连接到 XWayland
+                    std::env::set_var("DISPLAY", format!(":{}", display_number));
+                    tracing::info!("XWayland 已就绪，DISPLAY=:{}", display_number);
+                }
+                XWaylandEvent::Error => {
+                    tracing::warn!("XWayland 启动时崩溃");
+                }
+            });
+
+        if let Err(e) = ret {
+            tracing::error!("将 XWayland 事件源注册到事件循环失败: {}", e);
+        }
+    }
+
+    /// 设置 XWayland 的默认光标图像
+    #[cfg(feature = "xwayland")]
+    fn set_xwayland_cursor(wm: &mut X11Wm) -> Result<(), Box<dyn std::error::Error>> {
+        use smithay::utils::{Point, Size};
+
+        let cursor_size = std::env::var("XCURSOR_SIZE")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(24);
+        let cursor_theme = std::env::var("XCURSOR_THEME")
+            .ok()
+            .unwrap_or_else(|| "default".into());
+
+        let theme = xcursor::CursorTheme::load(&cursor_theme);
+        let icon_path = theme
+            .load_icon("default")
+            .ok_or("光标主题中找不到 default 图标")?;
+        let mut cursor_data = Vec::new();
+        std::io::Read::read_to_end(&mut std::fs::File::open(icon_path)?, &mut cursor_data)?;
+        let images =
+            xcursor::parser::parse_xcursor(&cursor_data).ok_or("解析 xcursor 文件失败")?;
+
+        // 选择最接近请求大小的图标
+        let image = images
+            .iter()
+            .min_by_key(|img| (cursor_size as i32 - img.size as i32).abs())
+            .ok_or("xcursor 文件中没有图像")?;
+
+        wm.set_cursor(
+            &image.pixels_rgba,
+            Size::from((image.width as u16, image.height as u16)),
+            Point::from((image.xhot as u16, image.yhot as u16)),
+        )?;
+
+        Ok(())
     }
 
     /// 初始化 Wayland 套接字监听源，注册到事件循环

@@ -5,6 +5,8 @@ pub mod decoration;
 pub mod layer_shell;
 pub mod xdg_shell;
 pub mod output;
+#[cfg(feature = "xwayland")]
+pub mod xwayland;
 
 use crate::state::RwayState;
 

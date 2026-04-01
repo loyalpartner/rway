@@ -77,6 +77,10 @@ fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     // 初始化 winit 后端（打开宿主窗口作为输出）
     crate::backend::winit::init_winit(&mut event_loop, &mut state)?;
 
+    // 启动 XWayland 以支持 X11 应用
+    #[cfg(feature = "xwayland")]
+    state.start_xwayland();
+
     // 注册 IPC 轮询到事件循环
     ipc::register_ipc_source(&event_loop.handle());
 

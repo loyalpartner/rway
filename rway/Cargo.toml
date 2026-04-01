@@ -20,6 +20,7 @@ bitflags = "2"
 # DRM/udev 后端依赖
 smithay-drm-extras = { version = "0.1", optional = true, default-features = false }
 xcursor = { version = "0.3", optional = true }
+x11rb = { version = "0.13", optional = true, default-features = false, features = ["composite"] }
 
 [dependencies.smithay]
 version = "0.7.0"
@@ -31,7 +32,7 @@ features = [
 ]
 
 [features]
-default = ["winit", "udev"]
+default = ["winit", "udev", "xwayland"]
 winit = ["smithay/backend_winit", "smithay/backend_egl"]
 udev = [
     "smithay-drm-extras",
@@ -45,5 +46,11 @@ udev = [
     "smithay/renderer_pixman",
     "smithay/renderer_multi",
     "smithay/use_system_lib",
+    "xcursor",
+]
+xwayland = [
+    "smithay/xwayland",
+    "smithay/x11rb_event_source",
+    "x11rb",
     "xcursor",
 ]

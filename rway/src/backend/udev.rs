@@ -477,6 +477,10 @@ pub fn run_udev() {
     std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
     info!("Wayland 套接字：{:?}", state.socket_name);
 
+    // 启动 XWayland 以支持 X11 应用
+    #[cfg(feature = "xwayland")]
+    state.start_xwayland();
+
     // 启动初始客户端
     crate::spawn_client();
 
