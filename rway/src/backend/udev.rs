@@ -91,6 +91,12 @@ type UdevRenderer<'a> = MultiRenderer<
     GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
 >;
 
+smithay::backend::renderer::element::render_elements! {
+    pub UdevRenderElement<='a, UdevRenderer<'a>>;
+    Space=smithay::desktop::space::SpaceRenderElements<UdevRenderer<'a>, smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement<UdevRenderer<'a>>>,
+    Cursor=smithay::backend::renderer::element::solid::SolidColorRenderElement,
+}
+
 /// 用于将 Output 与 DRM 设备/CRTC 关联的标识
 #[derive(Debug, PartialEq)]
 struct UdevOutputId {
@@ -1138,31 +1144,30 @@ fn render_surface(
     >(&mut renderer, [&state.space], &output, 1.0)
     .unwrap_or_default();
 
-    // 渲染帧并提交
-    let result = surface.drm_output.render_frame(
-        &mut renderer,
-        &space_elements,
-        [0.1f32, 0.1, 0.1, 1.0],
-        FrameFlags::empty(),
-    );
+    // 组合渲染元素：光标（z-order 最高）+ 窗口
+    let mut elements: Vec<UdevRenderElement<'_>> = Vec::new();
 
-    // 渲染软件光标（使用独立的 overlay pass）
+    // 光标元素：Smithay DRM compositor 会自动检测 Kind::Cursor 并分配到硬件光标平面
     if !matches!(
         state.cursor_status,
         smithay::input::pointer::CursorImageStatus::Hidden
     ) {
         if let Some(pointer) = state.seat.get_pointer() {
             let pos = pointer.current_location();
-            let cursor_element =
-                crate::cursor::cursor_square_element(pos, Scale::from(1.0));
-            let _ = surface.drm_output.render_frame(
-                &mut renderer,
-                &[cursor_element],
-                [0.0f32, 0.0, 0.0, 0.0],
-                FrameFlags::empty(),
-            );
+            let cursor_el = crate::cursor::cursor_square_element(pos, Scale::from(1.0));
+            elements.push(UdevRenderElement::Cursor(cursor_el));
         }
     }
+
+    elements.extend(space_elements.into_iter().map(UdevRenderElement::Space));
+
+    // 渲染帧并提交（光标元素自动走 DRM cursor plane）
+    let result = surface.drm_output.render_frame(
+        &mut renderer,
+        &elements,
+        [0.1f32, 0.1, 0.1, 1.0],
+        FrameFlags::empty(),
+    );
 
     let reschedule = match result {
         Ok(render_result) => {
