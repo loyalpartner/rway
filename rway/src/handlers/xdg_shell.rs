@@ -35,6 +35,7 @@ impl XdgShellHandler for RwayState {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        let wl_surface = surface.wl_surface().clone();
         let window = Window::new_wayland_window(surface);
 
         // 确保有活跃输出上的工作区可用
@@ -45,11 +46,18 @@ impl XdgShellHandler for RwayState {
         rway_tiling::commands::insert_window(&mut self.tiling, window_id);
         self.window_map.insert(window_id, window.clone());
 
-        // 先映射到 Space（relayout 会更新位置）
-        self.space.map_element(window, (0, 0), false);
+        // 映射到 Space 并提升到顶层
+        self.space.map_element(window, (0, 0), true);
 
         // 重新计算布局
         self.relayout();
+
+        // 新窗口自动获得键盘焦点（与 Sway 行为一致）
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        self.seat
+            .get_keyboard()
+            .unwrap()
+            .set_focus(self, Some(wl_surface), serial);
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
