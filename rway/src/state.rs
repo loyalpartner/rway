@@ -7,7 +7,9 @@ use smithay::{
     desktop::{layer_map_for_output, PopupManager, Space, Window, WindowSurfaceType},
     input::{pointer::CursorImageStatus, Seat, SeatState},
     reexports::{
-        calloop::{generic::Generic, EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction},
+        calloop::{
+            generic::Generic, EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction,
+        },
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::wl_surface::WlSurface,
@@ -21,10 +23,7 @@ use smithay::{
         selection::data_device::DataDeviceState,
         shell::{
             wlr_layer::WlrLayerShellState,
-            xdg::{
-                decoration::XdgDecorationState,
-                XdgShellState,
-            },
+            xdg::{decoration::XdgDecorationState, XdgShellState},
         },
         shm::ShmState,
         socket::ListeningSocketSource,
@@ -220,11 +219,8 @@ impl RwayState {
 
     /// 在输出创建后调用，使用指定名称在平铺树中注册输出和默认工作区
     pub fn init_tiling_output_named(&mut self, name: &str, width: i32, height: i32) {
-        let output_id = workspace::add_output(
-            &mut self.tiling,
-            name,
-            Rect::new(0, 0, width, height),
-        );
+        let output_id =
+            workspace::add_output(&mut self.tiling, name, Rect::new(0, 0, width, height));
         self.output_node = Some(output_id);
 
         // 创建默认工作区 "1"
@@ -283,11 +279,7 @@ impl RwayState {
     /// 如果不是，将焦点切换到第一个活跃输出的工作区。
     pub fn ensure_active_workspace(&mut self) {
         // 获取 Space 中所有活跃输出的名称
-        let active_outputs: Vec<String> = self
-            .space
-            .outputs()
-            .map(|o| o.name())
-            .collect();
+        let active_outputs: Vec<String> = self.space.outputs().map(|o| o.name()).collect();
 
         if active_outputs.is_empty() {
             return;
@@ -386,6 +378,9 @@ impl RwayState {
 
         // 重新布局以填充空出的空间
         self.relayout();
+
+        // 将焦点转移到下一个窗口
+        crate::focus::update_focus(self);
     }
 
     /// 分配下一个窗口 ID
@@ -462,8 +457,9 @@ impl RwayState {
         use smithay::xwayland::{XWayland, XWaylandEvent};
 
         // 初始化 XWayland Shell 协议状态
-        self.xwayland_shell_state =
-            Some(XWaylandShellState::new::<Self>(&self.display_handle.clone()));
+        self.xwayland_shell_state = Some(XWaylandShellState::new::<Self>(
+            &self.display_handle.clone(),
+        ));
 
         // 提前探测空闲的 X11 display 编号并设置 DISPLAY 环境变量，
         // 这样在 XWayland Ready 之前启动的子进程也能继承正确的 DISPLAY
@@ -553,8 +549,7 @@ impl RwayState {
             .ok_or("光标主题中找不到 default 图标")?;
         let mut cursor_data = Vec::new();
         std::io::Read::read_to_end(&mut std::fs::File::open(icon_path)?, &mut cursor_data)?;
-        let images =
-            xcursor::parser::parse_xcursor(&cursor_data).ok_or("解析 xcursor 文件失败")?;
+        let images = xcursor::parser::parse_xcursor(&cursor_data).ok_or("解析 xcursor 文件失败")?;
 
         // 选择最接近请求大小的图标
         let image = images
@@ -572,7 +567,10 @@ impl RwayState {
     }
 
     /// 初始化 Wayland 套接字监听源，注册到事件循环
-    fn init_wayland_listener(display: Display<RwayState>, event_loop: &mut EventLoop<Self>) -> OsString {
+    fn init_wayland_listener(
+        display: Display<RwayState>,
+        event_loop: &mut EventLoop<Self>,
+    ) -> OsString {
         let listening_socket = ListeningSocketSource::new_auto().unwrap();
         let socket_name = listening_socket.socket_name().to_os_string();
 
@@ -603,12 +601,17 @@ impl RwayState {
     }
 
     /// 在给定逻辑坐标 `pos` 下，找到对应的 WlSurface 及其相对坐标
-    pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-        self.space.element_under(pos).and_then(|(window, location)| {
-            window
-                .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
-                .map(|(s, p)| (s, (p + location).to_f64()))
-        })
+    pub fn surface_under(
+        &self,
+        pos: Point<f64, Logical>,
+    ) -> Option<(WlSurface, Point<f64, Logical>)> {
+        self.space
+            .element_under(pos)
+            .and_then(|(window, location)| {
+                window
+                    .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
+                    .map(|(s, p)| (s, (p + location).to_f64()))
+            })
     }
 }
 
