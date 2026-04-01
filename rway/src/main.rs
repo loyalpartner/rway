@@ -106,18 +106,15 @@ fn init_logging() {
     }
 }
 
-/// 根据 `-c <命令>` 参数启动初始客户端，默认尝试 weston-terminal
+/// 根据 `-c <命令>` 参数启动初始客户端
+///
+/// 不指定 `-c` 时不自动启动任何程序，由配置文件的 `exec` 指令决定。
 pub fn spawn_client() {
     let mut args = std::env::args().skip(1);
     let flag = args.next();
     let arg = args.next();
 
-    match (flag.as_deref(), arg) {
-        (Some("-c") | Some("--command"), Some(command)) => {
-            std::process::Command::new(command).spawn().ok();
-        }
-        _ => {
-            std::process::Command::new("weston-terminal").spawn().ok();
-        }
+    if let (Some("-c") | Some("--command"), Some(command)) = (flag.as_deref(), arg) {
+        std::process::Command::new(command).spawn().ok();
     }
 }
