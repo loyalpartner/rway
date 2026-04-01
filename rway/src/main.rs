@@ -88,25 +88,11 @@ fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
     tracing::info!("Wayland 套接字：{:?}", state.socket_name);
 
-    // 延迟启动初始客户端：等 XWayland Ready（约 200ms）设置 DISPLAY 后再启动，
-    // 确保子进程能继承完整的环境变量（WAYLAND_DISPLAY + DISPLAY）
-    event_loop
-        .handle()
-        .insert_source(
-            smithay::reexports::calloop::timer::Timer::from_duration(
-                std::time::Duration::from_millis(500),
-            ),
-            |_, _, _state| {
-                spawn_client();
-                smithay::reexports::calloop::timer::TimeoutAction::Drop
-            },
-        )
-        .ok();
+    // DISPLAY 已在 start_xwayland() 中提前设置，可以立即启动客户端
+    spawn_client();
 
     // 运行事件循环直到收到停止信号
-    event_loop.run(None, &mut state, move |_| {
-        // 每轮分发后的空闲回调
-    })?;
+    event_loop.run(None, &mut state, move |_| {})?;
 
     Ok(())
 }

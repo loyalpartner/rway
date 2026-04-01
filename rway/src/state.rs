@@ -422,10 +422,16 @@ impl RwayState {
         self.xwayland_shell_state =
             Some(XWaylandShellState::new::<Self>(&self.display_handle.clone()));
 
-        // 启动 XWayland 进程
+        // 提前探测空闲的 X11 display 编号并设置 DISPLAY 环境变量，
+        // 这样在 XWayland Ready 之前启动的子进程也能继承正确的 DISPLAY
+        let display_num = find_free_x11_display();
+        std::env::set_var("DISPLAY", format!(":{}", display_num));
+        tracing::info!("预设 DISPLAY=:{}", display_num);
+
+        // 启动 XWayland 进程，指定探测到的 display 编号
         let (xwayland, client) = match XWayland::spawn(
             &self.display_handle,
-            None,
+            Some(display_num),
             std::iter::empty::<(String, String)>(),
             true,
             Stdio::null(),
@@ -473,9 +479,6 @@ impl RwayState {
 
                     data.xwm = Some(wm);
                     data.xdisplay = Some(display_number);
-
-                    // 设置 DISPLAY 环境变量，以便子进程连接到 XWayland
-                    std::env::set_var("DISPLAY", format!(":{}", display_number));
                     tracing::info!("XWayland 已就绪，DISPLAY=:{}", display_number);
                 }
                 XWaylandEvent::Error => {
@@ -577,6 +580,20 @@ fn dirs_config_path(relative: &str) -> Option<std::path::PathBuf> {
                 .map(|h| std::path::PathBuf::from(h).join(".config"))
         })
         .map(|base| base.join(relative))
+}
+
+/// 探测空闲的 X11 display 编号（检查 /tmp/.X{N}-lock 和 /tmp/.X11-unix/X{N}）
+#[cfg(feature = "xwayland")]
+fn find_free_x11_display() -> u32 {
+    for n in 0..32 {
+        let lock = format!("/tmp/.X{}-lock", n);
+        let socket = format!("/tmp/.X11-unix/X{}", n);
+        if !std::path::Path::new(&lock).exists() && !std::path::Path::new(&socket).exists() {
+            return n;
+        }
+    }
+    // 回退到一个大编号
+    99
 }
 
 /// 每个连接到 rway 的 Wayland 客户端关联的数据
