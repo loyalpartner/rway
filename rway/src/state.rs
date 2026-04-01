@@ -258,6 +258,71 @@ impl RwayState {
         }
     }
 
+    /// 确保当前聚焦的工作区在一个活跃（有映射到 Space 中的）输出上。
+    /// 如果不是，将焦点切换到第一个活跃输出的工作区。
+    pub fn ensure_active_workspace(&mut self) {
+        // 获取 Space 中所有活跃输出的名称
+        let active_outputs: Vec<String> = self
+            .space
+            .outputs()
+            .map(|o| o.name())
+            .collect();
+
+        if active_outputs.is_empty() {
+            return;
+        }
+
+        // 检查当前聚焦工作区是否在活跃输出上
+        let focused_ws = rway_tiling::workspace::get_focused_workspace(&self.tiling);
+        if let Some(ws_id) = focused_ws {
+            if let Some(node) = self.tiling.get(ws_id) {
+                if let rway_tiling::NodeData::Workspace { output, .. } = &node.data {
+                    if let Some(out_node) = self.tiling.get(*output) {
+                        if let rway_tiling::NodeData::Output { name, .. } = &out_node.data {
+                            if active_outputs.contains(name) {
+                                return; // 已经在活跃输出上
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 聚焦工作区不在活跃输出上，找到一个活跃输出的工作区并切换
+        let workspaces = rway_tiling::workspace::get_workspaces(&self.tiling);
+        for (ws_id, ws_name, _) in &workspaces {
+            if let Some(node) = self.tiling.get(*ws_id) {
+                if let rway_tiling::NodeData::Workspace { output, .. } = &node.data {
+                    if let Some(out_node) = self.tiling.get(*output) {
+                        if let rway_tiling::NodeData::Output { name, .. } = &out_node.data {
+                            if active_outputs.contains(name) {
+                                rway_tiling::workspace::switch_workspace(&mut self.tiling, ws_name);
+                                tracing::info!("已将焦点切换到活跃输出上的工作区: {}", ws_name);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 没有活跃输出上的工作区，在第一个活跃输出上创建默认工作区
+        let first_output = &active_outputs[0];
+        let root = self.tiling.root();
+        for &output_id in self.tiling.children(root).to_vec().iter() {
+            if let Some(node) = self.tiling.get(output_id) {
+                if let rway_tiling::NodeData::Output { name, .. } = &node.data {
+                    if name == first_output {
+                        rway_tiling::workspace::add_workspace(&mut self.tiling, output_id, "1");
+                        rway_tiling::workspace::switch_workspace(&mut self.tiling, "1");
+                        tracing::info!("在活跃输出 {} 上创建了默认工作区", first_output);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     /// 检测并清理已关闭的窗口：从平铺树和 window_map 中移除死亡窗口
     ///
     /// 应在每帧 `space.refresh()` 之后调用。

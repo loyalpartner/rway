@@ -37,6 +37,9 @@ impl XdgShellHandler for RwayState {
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let window = Window::new_wayland_window(surface);
 
+        // 确保有活跃输出上的工作区可用
+        self.ensure_active_workspace();
+
         // 分配窗口 ID 并插入平铺树
         let window_id = self.alloc_window_id();
         rway_tiling::commands::insert_window(&mut self.tiling, window_id);
