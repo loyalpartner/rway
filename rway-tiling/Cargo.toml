@@ -1,0 +1,9 @@
+[package]
+name = "rway-tiling"
+version = "0.1.0"
+description = "Tiling engine for rway compositor — i3/Sway-compatible tree-based window layout"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]

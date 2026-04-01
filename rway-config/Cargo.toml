@@ -1,0 +1,13 @@
+[package]
+name = "rway-config"
+version = "0.1.0"
+description = "Sway-compatible configuration parser for rway compositor"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
