@@ -1146,6 +1146,24 @@ fn render_surface(
         FrameFlags::empty(),
     );
 
+    // 渲染软件光标（使用独立的 overlay pass）
+    if !matches!(
+        state.cursor_status,
+        smithay::input::pointer::CursorImageStatus::Hidden
+    ) {
+        if let Some(pointer) = state.seat.get_pointer() {
+            let pos = pointer.current_location();
+            let cursor_element =
+                crate::cursor::cursor_square_element(pos, Scale::from(1.0));
+            let _ = surface.drm_output.render_frame(
+                &mut renderer,
+                &[cursor_element],
+                [0.0f32, 0.0, 0.0, 0.0],
+                FrameFlags::empty(),
+            );
+        }
+    }
+
     let reschedule = match result {
         Ok(render_result) => {
             let rendered = !render_result.is_empty;
