@@ -15,6 +15,8 @@ use smithay::{
     utils::SERIAL_COUNTER,
 };
 
+use smithay::wayland::seat::WaylandFocus;
+
 use crate::state::RwayState;
 
 impl RwayState {
@@ -108,19 +110,23 @@ impl RwayState {
                     {
                         // 点击聚焦：提升窗口层级并设置键盘焦点
                         self.space.raise_element(&window, true);
-                        keyboard.set_focus(
-                            self,
-                            Some(window.toplevel().unwrap().wl_surface().clone()),
-                            serial,
-                        );
+                        let focus_surface = window
+                            .toplevel()
+                            .map(|t| t.wl_surface().clone())
+                            .or_else(|| window.wl_surface().map(|s| s.into_owned()));
+                        keyboard.set_focus(self, focus_surface, serial);
                         self.space.elements().for_each(|w| {
-                            w.toplevel().unwrap().send_pending_configure();
+                            if let Some(t) = w.toplevel() {
+                                t.send_pending_configure();
+                            }
                         });
                     } else {
                         // 点击空白处：取消所有窗口激活状态
                         self.space.elements().for_each(|w| {
                             w.set_activated(false);
-                            w.toplevel().unwrap().send_pending_configure();
+                            if let Some(t) = w.toplevel() {
+                                t.send_pending_configure();
+                            }
                         });
                         keyboard.set_focus(self, Option::<WlSurface>::None, serial);
                     }

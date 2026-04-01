@@ -4,6 +4,8 @@ use smithay::input::keyboard::ModifiersState;
 
 use rway_config::{Action, Keybinding, Modifier};
 
+use smithay::wayland::seat::WaylandFocus;
+
 use crate::state::RwayState;
 
 /// 检查当前按键是否匹配某个快捷键绑定
@@ -80,13 +82,14 @@ pub fn execute_action(state: &mut RwayState, action: &Action) {
         }
         Action::Kill => {
             // 关闭当前聚焦的窗口
+            let focus = state.seat.get_keyboard().and_then(|kb| kb.current_focus());
             if let Some(window) = state.space.elements().find(|w| {
-                w.toplevel()
-                    .map(|t| t.wl_surface().clone())
-                    .as_ref()
-                    == state.seat.get_keyboard().unwrap().current_focus().as_ref()
+                let wl = w.toplevel().map(|t| t.wl_surface().clone()).or_else(|| w.wl_surface().map(|s| s.into_owned()));
+                wl.as_ref() == focus.as_ref()
             }).cloned() {
-                window.toplevel().unwrap().send_close();
+                if let Some(toplevel) = window.toplevel() {
+                    toplevel.send_close();
+                }
             }
         }
         Action::ToggleFloating => {

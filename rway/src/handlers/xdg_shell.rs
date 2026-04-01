@@ -82,7 +82,7 @@ impl XdgShellHandler for RwayState {
             let window = self
                 .space
                 .elements()
-                .find(|w| w.toplevel().unwrap().wl_surface() == wl_surface)
+                .find(|w| w.toplevel().map(|t| t.wl_surface() == wl_surface).unwrap_or(false))
                 .unwrap()
                 .clone();
             let initial_window_location = self.space.element_location(&window).unwrap();
@@ -113,7 +113,7 @@ impl XdgShellHandler for RwayState {
             let window = self
                 .space
                 .elements()
-                .find(|w| w.toplevel().unwrap().wl_surface() == wl_surface)
+                .find(|w| w.toplevel().map(|t| t.wl_surface() == wl_surface).unwrap_or(false))
                 .unwrap()
                 .clone();
             let initial_window_location = self.space.element_location(&window).unwrap();
@@ -176,7 +176,7 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
     // 处理顶层窗口的初始 configure
     if let Some(window) = space
         .elements()
-        .find(|w| w.toplevel().unwrap().wl_surface() == surface)
+        .find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false))
         .cloned()
     {
         let initial_configure_sent = with_states(surface, |states| {
@@ -190,7 +190,9 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
         });
 
         if !initial_configure_sent {
-            window.toplevel().unwrap().send_configure();
+            if let Some(toplevel) = window.toplevel() {
+                toplevel.send_configure();
+            }
         }
     }
 
@@ -217,7 +219,7 @@ impl RwayState {
         let Some(window) = self
             .space
             .elements()
-            .find(|w| w.toplevel().unwrap().wl_surface() == &root)
+            .find(|w| w.toplevel().map(|t| t.wl_surface() == &root).unwrap_or(false))
         else {
             return;
         };
