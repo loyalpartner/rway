@@ -25,7 +25,15 @@ impl CompositorHandler for RwayState {
     }
 
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        &client.get_data::<ClientState>().unwrap().compositor_state
+        // 先尝试普通 Wayland 客户端，再尝试 XWayland 客户端
+        if let Some(state) = client.get_data::<ClientState>() {
+            return &state.compositor_state;
+        }
+        #[cfg(feature = "xwayland")]
+        if let Some(state) = client.get_data::<smithay::xwayland::XWaylandClientData>() {
+            return &state.compositor_state;
+        }
+        panic!("未知客户端类型：既不是 Wayland 也不是 XWayland 客户端");
     }
 
     fn commit(&mut self, surface: &WlSurface) {
