@@ -1,0 +1,28 @@
+[package]
+name = "rway"
+version = "0.1.0"
+description = "A modern Sway replacement Wayland compositor built on Smithay"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rway-tiling = { path = "../rway-tiling" }
+rway-config = { path = "../rway-config" }
+rway-ipc = { path = "../rway-ipc" }
+
+serde_json = "1"
+tracing = { version = "0.1", features = ["max_level_trace", "release_max_level_debug"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+bitflags = "2"
+
+[dependencies.smithay]
+version = "0.7.0"
+default-features = false
+features = [
+    "backend_winit",
+    "backend_egl",
+    "desktop",
+    "wayland_frontend",
+    "renderer_gl",
+]
