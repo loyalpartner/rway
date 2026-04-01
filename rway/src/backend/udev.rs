@@ -488,6 +488,8 @@ pub fn run_udev() {
     info!("进入主事件循环");
     event_loop
         .run(None, &mut state, move |state| {
+            // 推进动画插值，更新窗口在 Space 中的渲染位置
+            state.update_animations();
             state.space.refresh();
             state.popups.cleanup();
             state.cleanup_dead_windows();

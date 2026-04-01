@@ -1,5 +1,6 @@
 #![allow(irrefutable_let_patterns)]
 
+mod animation;
 mod backend;
 mod border;
 mod focus;

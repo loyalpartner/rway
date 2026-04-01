@@ -87,6 +87,9 @@ pub fn init_winit(
                 }
 
                 WinitEvent::Redraw => {
+                    // 推进动画插值，更新窗口在 Space 中的渲染位置
+                    state.update_animations();
+
                     let size = backend.window_size();
                     let damage = Rectangle::from_size(size);
 

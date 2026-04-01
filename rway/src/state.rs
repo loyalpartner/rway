@@ -40,6 +40,8 @@ use smithay::utils::IsAlive;
 
 use rway_tiling::{layout, workspace, NodeId, Rect, Tree};
 
+use crate::animation::{AnimationConfig, AnimationManager};
+
 /// rway 合成器的主状态结构体
 pub struct RwayState {
     pub start_time: std::time::Instant,
@@ -66,6 +68,9 @@ pub struct RwayState {
     pub window_map: HashMap<u64, Window>,
     pub next_window_id: u64,
     pub output_node: Option<NodeId>,
+
+    // 动画管理器
+    pub animations: AnimationManager,
 
     // 配置
     pub config: rway_config::Config,
@@ -151,6 +156,9 @@ impl RwayState {
         // 初始化平铺引擎
         let tiling = Tree::new();
 
+        // 初始化动画管理器
+        let animations = AnimationManager::new(AnimationConfig::default());
+
         // 加载配置
         let config = Self::load_config();
 
@@ -180,6 +188,8 @@ impl RwayState {
             window_map: HashMap::new(),
             next_window_id: 1,
             output_node: None,
+
+            animations,
 
             loop_handle,
 
@@ -241,19 +251,25 @@ impl RwayState {
         };
         layout::compute_layout(&mut self.tiling, root, available, &gaps);
 
-        // 获取所有窗口的几何并更新 Space
+        // 获取所有窗口的几何并设置动画目标
         let geometries = layout::get_window_geometries(&self.tiling);
         for (window_id, rect) in geometries {
+            // 设置动画目标位置（由 AnimationManager 决定是否启动插值动画）
+            self.animations
+                .set_target(window_id, rect.x, rect.y, rect.width, rect.height);
+
             if let Some(window) = self.window_map.get(&window_id) {
-                // 配置窗口大小
+                // 配置窗口的目标大小（客户端需要最终尺寸来渲染内容）
                 if let Some(toplevel) = window.toplevel() {
                     toplevel.with_pending_state(|state| {
                         state.size = Some((rect.width, rect.height).into());
                     });
                     toplevel.send_pending_configure();
                 }
-                // 更新窗口在 Space 中的位置
-                self.space.map_element(window.clone(), (rect.x, rect.y), false);
+                // 立即更新 Space 位置（用动画当前位置或直接用目标位置）
+                if let Some((x, y, _w, _h)) = self.animations.get_position(window_id) {
+                    self.space.map_element(window.clone(), (x, y), false);
+                }
             }
         }
     }
@@ -323,6 +339,21 @@ impl RwayState {
         }
     }
 
+    /// 每帧调用：推进动画插值并更新 Space 中窗口的渲染位置
+    ///
+    /// 应在渲染之前调用。动画管理器会根据时间推进所有活跃动画的插值，
+    /// 然后将计算出的中间帧位置应用到 Space。
+    pub fn update_animations(&mut self) {
+        self.animations.tick();
+
+        // 将动画计算出的当前位置应用到 Space
+        for (&window_id, window) in &self.window_map {
+            if let Some((x, y, _w, _h)) = self.animations.get_position(window_id) {
+                self.space.map_element(window.clone(), (x, y), false);
+            }
+        }
+    }
+
     /// 检测并清理已关闭的窗口：从平铺树和 window_map 中移除死亡窗口
     ///
     /// 应在每帧 `space.refresh()` 之后调用。
@@ -339,10 +370,11 @@ impl RwayState {
             return;
         }
 
-        // 从平铺树和 window_map 中移除
+        // 从平铺树、window_map 和动画管理器中移除
         for id in &dead_ids {
             rway_tiling::commands::remove_window(&mut self.tiling, *id);
             self.window_map.remove(id);
+            self.animations.remove(*id);
         }
 
         tracing::debug!("清理了 {} 个已关闭窗口", dead_ids.len());
