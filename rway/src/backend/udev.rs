@@ -162,6 +162,8 @@ enum DeviceAddError {
     DrmNode(CreateDrmNodeError),
     #[error("添加设备到 GpuManager 失败: {0}")]
     AddNode(smithay::backend::egl::Error),
+    #[error("获取渲染器失败")]
+    GpuManager,
     #[error("设备没有渲染节点")]
     NoRenderNode,
     #[error("主 GPU 缺失")]
@@ -349,11 +351,9 @@ pub fn run_udev() {
                     }
                     let udev = state.udev_data.as_mut().unwrap();
                     for (_node, backend) in udev.backends.iter_mut() {
-                        backend
-                            .drm_output_manager
-                            .device_mut()
-                            .activate(false)
-                            .expect("激活 DRM 后端失败");
+                        if let Err(err) = backend.drm_output_manager.device_mut().activate(false) {
+                            error!("激活 DRM 后端失败: {:?}", err);
+                        }
                     }
 
                     // 恢复后重新渲染所有输出
@@ -584,10 +584,13 @@ fn device_added(
 
     // 获取渲染器支持的格式
     let render_node_for_renderer = render_node.unwrap_or(udev.primary_gpu);
-    let mut renderer = udev
-        .gpus
-        .single_renderer(&render_node_for_renderer)
-        .unwrap();
+    let mut renderer = match udev.gpus.single_renderer(&render_node_for_renderer) {
+        Ok(r) => r,
+        Err(err) => {
+            error!("获取渲染器失败: {:?}", err);
+            return Err(DeviceAddError::GpuManager);
+        }
+    };
     let render_formats = renderer
         .as_mut()
         .egl_context()
@@ -708,7 +711,13 @@ fn connector_connected(
     };
 
     let render_node = device.render_node.unwrap_or(udev.primary_gpu);
-    let mut renderer = udev.gpus.single_renderer(&render_node).unwrap();
+    let mut renderer = match udev.gpus.single_renderer(&render_node) {
+        Ok(r) => r,
+        Err(err) => {
+            warn!("获取渲染器失败，跳过连接器: {:?}", err);
+            return;
+        }
+    };
 
     let output_name = format!(
         "{}-{}",
@@ -927,9 +936,9 @@ fn frame_finish(
     };
 
     // VBlank 节流：防止显示器运行过快
-    let udev = state.udev_data.as_mut().unwrap();
-    let device = udev.backends.get_mut(&dev_id).unwrap();
-    let surface = device.surfaces.get_mut(&crtc).unwrap();
+    let Some(udev) = state.udev_data.as_mut() else { return; };
+    let Some(device) = udev.backends.get_mut(&dev_id) else { return; };
+    let Some(surface) = device.surfaces.get_mut(&crtc) else { return; };
 
     let vblank_remaining = surface.last_presentation_time.map(|last| {
         frame_duration.saturating_sub(Time::elapsed(&last, clock))
@@ -958,14 +967,13 @@ fn frame_finish(
                     },
                 )
                 .expect("注册 VBlank 节流定时器失败");
-            let udev = state.udev_data.as_mut().unwrap();
-            udev.backends
-                .get_mut(&dev_id)
-                .unwrap()
-                .surfaces
-                .get_mut(&crtc)
-                .unwrap()
-                .vblank_throttle_timer = Some(timer_token);
+            if let Some(udev) = state.udev_data.as_mut() {
+                if let Some(device) = udev.backends.get_mut(&dev_id) {
+                    if let Some(surface) = device.surfaces.get_mut(&crtc) {
+                        surface.vblank_throttle_timer = Some(timer_token);
+                    }
+                }
+            }
             return;
         }
     }
@@ -1012,9 +1020,9 @@ fn frame_finish(
         // 延迟重绘以降低客户端缓冲区延迟
         let repaint_delay = Duration::from_secs_f64(frame_duration.as_secs_f64() * 0.6);
 
-        let udev = state.udev_data.as_ref().unwrap();
-        let device = udev.backends.get(&dev_id).unwrap();
-        let surface = device.surfaces.get(&crtc).unwrap();
+        let Some(udev) = state.udev_data.as_ref() else { return; };
+        let Some(device) = udev.backends.get(&dev_id) else { return; };
+        let Some(surface) = device.surfaces.get(&crtc) else { return; };
 
         let timer = if surface
             .render_node
@@ -1103,13 +1111,18 @@ fn render_surface(
     };
 
     let render_node = surface.render_node.unwrap_or(primary_gpu);
-    let mut renderer = if primary_gpu == render_node {
+    let mut renderer = match if primary_gpu == render_node {
         udev.gpus.single_renderer(&render_node)
     } else {
         let format = surface.drm_output.format();
         udev.gpus.renderer(&primary_gpu, &render_node, format)
-    }
-    .unwrap();
+    } {
+        Ok(r) => r,
+        Err(err) => {
+            warn!("获取渲染器失败，跳过本帧: {:?}", err);
+            return;
+        }
+    };
 
     // 使用 Space 的渲染元素来组合帧
     let space_elements = smithay::desktop::space::space_render_elements::<
