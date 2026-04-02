@@ -2,6 +2,12 @@
 
 rway 是基于 [Smithay](https://github.com/Smithay/smithay) 框架构建的 Wayland 合成器，目标是让用户可以无缝从 Sway 迁移到 rway，复用现有的 Sway 配置文件、快捷键、IPC 工具链（swaymsg、waybar 等）。
 
+## Language
+
+- All code comments and log messages (tracing) must be in **English**.
+- Git commit messages in English.
+- Respond to the user in Chinese (简体中文).
+
 ## 架构概览
 
 ### Crate 职责

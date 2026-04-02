@@ -259,10 +259,10 @@ fn build_tree_node(
         .iter()
         .map(|&cid| build_tree_node(state, cid, &rect))
         .collect();
-    let focus: Vec<i64> = children.iter().map(|c| c.0 as i64).collect();
+    let focus: Vec<i64> = children.iter().map(|c| c.index() as i64).collect();
 
     TreeNode {
-        id: node_id.0 as i64,
+        id: node_id.index() as i64,
         name,
         node_type: node_type.to_string(),
         layout: layout.to_string(),
@@ -282,7 +282,7 @@ fn build_tree_node(
 
 fn empty_tree_node(node_id: rway_tiling::NodeId) -> TreeNode {
     TreeNode {
-        id: node_id.0 as i64,
+        id: node_id.index() as i64,
         name: None,
         node_type: "con".to_string(),
         layout: "none".to_string(),

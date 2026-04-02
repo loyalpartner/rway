@@ -1,15 +1,33 @@
 // Arena-allocated N-ary tree for i3/Sway-compatible tiling layout
 
-/// 间距配置：控制窗口之间以及窗口与屏幕边缘之间的空白区域
+use crate::error::TilingError;
+
+/// Gap configuration: controls spacing between windows and screen edges
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct GapsConfig {
-    /// 相邻窗口之间的间距（像素）
+    /// Gap between adjacent windows (pixels)
     pub inner: i32,
-    /// 窗口与屏幕边缘之间的间距（像素）
+    /// Gap between windows and screen edges (pixels)
     pub outer: i32,
 }
 
-/// 矩形区域，用于描述节点的几何位置与尺寸
+/// Focus movement direction
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// Resize axis (local to rway-tiling, no dependency on rway-config)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeAxis {
+    Width,
+    Height,
+}
+
+/// Rectangle area describing a node's geometry and position
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {
     pub x: i32,
@@ -28,17 +46,24 @@ impl Rect {
         }
     }
 
-    /// 判断矩形面积是否有效（宽高均为正数）
+    /// Check if the rectangle has valid positive dimensions
     pub fn is_valid(&self) -> bool {
         self.width > 0 && self.height > 0
     }
 }
 
-/// 节点标识符（Arena 索引包装器）
+/// Node identifier (arena index wrapper)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeId(pub usize);
+pub struct NodeId(pub(crate) usize);
 
-/// 布局类型，对应 i3/Sway 的四种容器布局
+impl NodeId {
+    /// Return the raw arena index
+    pub fn index(self) -> usize {
+        self.0
+    }
+}
+
+/// Layout type, corresponding to i3/Sway's four container layouts
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layout {
     SplitH,
@@ -47,32 +72,32 @@ pub enum Layout {
     Stacked,
 }
 
-/// 节点携带的业务数据
+/// Business data carried by a node
 #[derive(Debug, Clone)]
 pub enum NodeData {
-    /// 虚拟根节点，整棵树唯一
+    /// Virtual root node, unique per tree
     Root,
 
-    /// 物理输出（显示器）
+    /// Physical output (monitor)
     Output { name: String, geometry: Rect },
 
-    /// 工作区，归属某个输出
+    /// Workspace, belonging to an output
     Workspace {
         name: String,
         output: NodeId,
         is_visible: bool,
     },
 
-    /// 分割/标签/堆叠容器
+    /// Split/Tabbed/Stacked container
     Container {
         layout: Layout,
-        /// 各子节点的比例大小（之和可以为任意正数，计算时按比例分配）
+        /// Proportional sizes of children (sum can be any positive number)
         sizes: Vec<f64>,
-        /// 当前聚焦的子节点索引
+        /// Index of the currently focused child
         focused_child: usize,
     },
 
-    /// 实际窗口
+    /// Actual window
     Window {
         window_id: u64,
         floating: bool,
@@ -81,36 +106,34 @@ pub enum NodeData {
         sticky: bool,
         marks: Vec<String>,
         geometry: Rect,
-        /// 进入浮动/全屏前保存的几何信息
+        /// Saved geometry before entering floating/fullscreen
         saved_geometry: Option<Rect>,
     },
 }
 
-/// Arena 树中的单个节点
+/// A single node in the arena tree
 #[derive(Debug, Clone)]
 pub struct Node {
-    pub id: NodeId,
-    pub parent: Option<NodeId>,
-    pub children: Vec<NodeId>,
+    pub(crate) parent: Option<NodeId>,
+    pub(crate) children: Vec<NodeId>,
     pub data: NodeData,
 }
 
-/// Arena-allocated N 叉树
+/// Arena-allocated N-ary tree
 ///
-/// 使用 `Vec<Option<Node>>` 存储节点，配合 free_list 复用已释放的槽位。
+/// Uses `Vec<Option<Node>>` for node storage with a free list for slot reuse.
 pub struct Tree {
     nodes: Vec<Option<Node>>,
     free_list: Vec<NodeId>,
     root: NodeId,
-    /// 当前焦点层级（用于 focus_parent/focus_child），None 表示叶子窗口
+    /// Current focus level (for focus_parent/focus_child), None means leaf window
     pub focus_node: Option<NodeId>,
 }
 
 impl Tree {
-    /// 创建带有根节点的空树
+    /// Create a new tree with a root node
     pub fn new() -> Self {
         let root_node = Node {
-            id: NodeId(0),
             parent: None,
             children: Vec::new(),
             data: NodeData::Root,
@@ -123,12 +146,12 @@ impl Tree {
         }
     }
 
-    /// 根节点 ID
+    /// Root node ID
     pub fn root(&self) -> NodeId {
         self.root
     }
 
-    /// 向 parent 添加子节点，返回新节点的 ID
+    /// Add a child node under parent, returns the new node's ID
     pub fn add_node(&mut self, parent: NodeId, data: NodeData) -> NodeId {
         let id = if let Some(reused) = self.free_list.pop() {
             reused
@@ -139,14 +162,13 @@ impl Tree {
         };
 
         let node = Node {
-            id,
             parent: Some(parent),
             children: Vec::new(),
             data,
         };
         self.nodes[id.0] = Some(node);
 
-        // 将自己加入父节点的 children
+        // Add self to parent's children list
         if let Some(parent_node) = self.nodes[parent.0].as_mut() {
             parent_node.children.push(id);
         }
@@ -154,9 +176,9 @@ impl Tree {
         id
     }
 
-    /// 删除节点及其所有后代，释放的槽位加入 free_list
+    /// Remove node and all descendants, freed slots go to free_list
     pub fn remove_node(&mut self, id: NodeId) {
-        // 收集所有后代（含自身），使用迭代而非递归避免栈溢出
+        // Collect all descendants (including self) iteratively to avoid stack overflow
         let mut to_remove = Vec::new();
         let mut stack = vec![id];
         while let Some(cur) = stack.pop() {
@@ -168,7 +190,7 @@ impl Tree {
             to_remove.push(cur);
         }
 
-        // 从父节点的 children 列表中移除 id
+        // Remove id from parent's children list
         if let Some(node) = self.nodes[id.0].as_ref() {
             if let Some(parent_id) = node.parent {
                 if let Some(parent_node) = self.nodes[parent_id.0].as_mut() {
@@ -177,24 +199,24 @@ impl Tree {
             }
         }
 
-        // 置空并回收槽位
+        // Clear slots and recycle
         for rid in to_remove {
             self.nodes[rid.0] = None;
             self.free_list.push(rid);
         }
     }
 
-    /// 不可变引用
+    /// Immutable reference to node
     pub fn get(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id.0)?.as_ref()
     }
 
-    /// 可变引用
+    /// Mutable reference to node
     pub fn get_mut(&mut self, id: NodeId) -> Option<&mut Node> {
         self.nodes.get_mut(id.0)?.as_mut()
     }
 
-    /// 返回子节点 ID 切片
+    /// Return child node ID slice
     pub fn children(&self, id: NodeId) -> &[NodeId] {
         match self.nodes.get(id.0) {
             Some(Some(node)) => &node.children,
@@ -202,14 +224,1517 @@ impl Tree {
         }
     }
 
-    /// 返回父节点 ID
+    /// Return parent node ID
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
         self.nodes.get(id.0)?.as_ref()?.parent
     }
 
-    /// 当前存活节点数量（用于测试/调试）
+    /// Number of currently alive nodes (for testing/debugging)
     pub fn node_count(&self) -> usize {
         self.nodes.iter().filter(|n| n.is_some()).count()
+    }
+}
+
+// ── Lightweight enum for borrow-safe layout dispatch ────────────
+
+enum LayoutInfo {
+    PassThrough {
+        children: Vec<NodeId>,
+        area: Rect,
+    },
+    Split {
+        layout: Layout,
+        sizes: Vec<f64>,
+        focused_child: usize,
+        children: Vec<NodeId>,
+    },
+    Leaf {
+        floating: bool,
+    },
+    Skip,
+}
+
+// ── Container methods ───────────────────────────────────────────
+
+impl Tree {
+    /// Append a 1.0 size entry to a container's sizes vec
+    pub fn add_container_size(&mut self, container: NodeId) -> Result<(), TilingError> {
+        let node = self
+            .get_mut(container)
+            .ok_or(TilingError::NodeNotFound(container))?;
+        if let NodeData::Container { ref mut sizes, .. } = node.data {
+            sizes.push(1.0);
+            Ok(())
+        } else {
+            Err(TilingError::NotAContainer(container))
+        }
+    }
+
+    /// Remove the size at `child_index` and adjust focused_child
+    pub fn remove_container_size(
+        &mut self,
+        container: NodeId,
+        child_index: usize,
+    ) -> Result<(), TilingError> {
+        let node = self
+            .get_mut(container)
+            .ok_or(TilingError::NodeNotFound(container))?;
+        if let NodeData::Container {
+            ref mut sizes,
+            ref mut focused_child,
+            ..
+        } = node.data
+        {
+            if child_index < sizes.len() {
+                sizes.remove(child_index);
+            }
+            if !sizes.is_empty() && *focused_child >= sizes.len() {
+                *focused_child = sizes.len() - 1;
+            } else if sizes.is_empty() {
+                *focused_child = 0;
+            }
+            Ok(())
+        } else {
+            Err(TilingError::NotAContainer(container))
+        }
+    }
+
+    /// Set the layout type of a container
+    pub fn set_layout(
+        &mut self,
+        container: NodeId,
+        layout: Layout,
+    ) -> Result<(), TilingError> {
+        let node = self
+            .get_mut(container)
+            .ok_or(TilingError::NodeNotFound(container))?;
+        if let NodeData::Container {
+            layout: ref mut l, ..
+        } = node.data
+        {
+            *l = layout;
+            Ok(())
+        } else {
+            Err(TilingError::NotAContainer(container))
+        }
+    }
+
+    /// Get the currently focused child of a container
+    pub fn focused_child(&self, container: NodeId) -> Result<Option<NodeId>, TilingError> {
+        let node = self
+            .get(container)
+            .ok_or(TilingError::NodeNotFound(container))?;
+        let focused_index = match &node.data {
+            NodeData::Container { focused_child, .. } => *focused_child,
+            _ => return Err(TilingError::NotAContainer(container)),
+        };
+        let children = self.children(container);
+        Ok(children.get(focused_index).copied())
+    }
+
+    /// Set the focused child of a container to the given child node
+    pub fn set_focused_child(
+        &mut self,
+        container: NodeId,
+        child: NodeId,
+    ) -> Result<(), TilingError> {
+        let children = self.children(container).to_vec();
+        let index = children
+            .iter()
+            .position(|&c| c == child)
+            .ok_or(TilingError::NotAContainer(container))?;
+
+        let node = self
+            .get_mut(container)
+            .ok_or(TilingError::NodeNotFound(container))?;
+        if let NodeData::Container {
+            ref mut focused_child,
+            ..
+        } = node.data
+        {
+            *focused_child = index;
+            Ok(())
+        } else {
+            Err(TilingError::NotAContainer(container))
+        }
+    }
+}
+
+// ── Workspace methods ───────────────────────────────────────────
+
+impl Tree {
+    /// Register a physical output (monitor) under the root node
+    pub fn add_output(&mut self, name: &str, geometry: Rect) -> NodeId {
+        let root = self.root();
+        self.add_node(
+            root,
+            NodeData::Output {
+                name: name.to_string(),
+                geometry,
+            },
+        )
+    }
+
+    /// Create a workspace under the given output. Returns existing if same name exists.
+    pub fn add_workspace(&mut self, output: NodeId, name: &str) -> NodeId {
+        let existing: Vec<NodeId> = self.children(output).to_vec();
+        for child_id in existing {
+            if let Some(node) = self.get(child_id) {
+                if let NodeData::Workspace { name: ws_name, .. } = &node.data {
+                    if ws_name == name {
+                        return child_id;
+                    }
+                }
+            }
+        }
+
+        self.add_node(
+            output,
+            NodeData::Workspace {
+                name: name.to_string(),
+                output,
+                is_visible: true,
+            },
+        )
+    }
+
+    /// Get the currently visible (focused) workspace
+    pub fn focused_workspace(&self) -> Option<NodeId> {
+        let root = self.root();
+        for &output_id in self.children(root) {
+            for &ws_id in self.children(output_id) {
+                if let Some(node) = self.get(ws_id) {
+                    if let NodeData::Workspace { is_visible, .. } = &node.data {
+                        if *is_visible {
+                            return Some(ws_id);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Switch to the workspace with the given name
+    pub fn switch_workspace(&mut self, name: &str) -> bool {
+        let target = self.find_workspace_by_name(name);
+        let (target_id, output_id) = match target {
+            Some(v) => v,
+            None => return false,
+        };
+
+        let siblings: Vec<NodeId> = self.children(output_id).to_vec();
+        for ws_id in siblings {
+            if let Some(node) = self.get_mut(ws_id) {
+                if let NodeData::Workspace {
+                    ref mut is_visible, ..
+                } = node.data
+                {
+                    *is_visible = ws_id == target_id;
+                }
+            }
+        }
+        true
+    }
+
+    /// Return all workspaces as `(id, name, is_visible)` tuples
+    pub fn workspaces(&self) -> Vec<(NodeId, String, bool)> {
+        let root = self.root();
+        let mut result = Vec::new();
+
+        for &output_id in self.children(root) {
+            for &ws_id in self.children(output_id) {
+                if let Some(node) = self.get(ws_id) {
+                    if let NodeData::Workspace {
+                        name, is_visible, ..
+                    } = &node.data
+                    {
+                        result.push((ws_id, name.clone(), *is_visible));
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Span a workspace across multiple outputs
+    pub fn span_workspace(&mut self, workspace: NodeId, outputs: &[NodeId]) -> bool {
+        let ws_name = match self.get(workspace) {
+            Some(node) => match &node.data {
+                NodeData::Workspace { name, .. } => name.clone(),
+                _ => return false,
+            },
+            None => return false,
+        };
+
+        let mut any_added = false;
+        for &output_id in outputs {
+            let is_output = self
+                .get(output_id)
+                .map(|n| matches!(n.data, NodeData::Output { .. }))
+                .unwrap_or(false);
+            if !is_output {
+                continue;
+            }
+
+            let same_output = self
+                .get(workspace)
+                .and_then(|n| {
+                    if let NodeData::Workspace { output, .. } = &n.data {
+                        Some(*output == output_id)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false);
+            if same_output {
+                continue;
+            }
+
+            let children_before = self.children(output_id).len();
+            let _new_ws = self.add_workspace(output_id, &ws_name);
+            let children_after = self.children(output_id).len();
+            if children_after > children_before {
+                any_added = true;
+            }
+        }
+        any_added
+    }
+
+    /// Rename a workspace
+    pub fn rename_workspace(&mut self, old_name: &str, new_name: &str) -> bool {
+        let root = self.root();
+        let outputs: Vec<NodeId> = self.children(root).to_vec();
+        for output_id in outputs {
+            let ws_ids: Vec<NodeId> = self.children(output_id).to_vec();
+            for ws_id in ws_ids {
+                if let Some(node) = self.get_mut(ws_id) {
+                    if let NodeData::Workspace { ref mut name, .. } = node.data {
+                        if name.as_str() == old_name {
+                            *name = new_name.to_string();
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Find a workspace by name, returns (workspace_id, output_id)
+    fn find_workspace_by_name(&self, name: &str) -> Option<(NodeId, NodeId)> {
+        let root = self.root();
+        for &output_id in self.children(root) {
+            for &ws_id in self.children(output_id) {
+                if let Some(node) = self.get(ws_id) {
+                    if let NodeData::Workspace { name: ws_name, .. } = &node.data {
+                        if ws_name == name {
+                            return Some((ws_id, output_id));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+// ── Command methods ─────────────────────────────────────────────
+
+impl Tree {
+    /// Insert a new window in the focused workspace's focused position
+    pub fn insert_window(&mut self, window_id: u64) -> NodeId {
+        let ws_id = match self.focused_workspace() {
+            Some(id) => id,
+            None => self.root(),
+        };
+
+        self.insert_window_into(ws_id, window_id)
+    }
+
+    /// Remove the window with the given window_id from the tree
+    pub fn remove_window(&mut self, window_id: u64) -> bool {
+        let win_id = match self.find_window_by_id(window_id) {
+            Some(id) => id,
+            None => return false,
+        };
+
+        let parent_id = self.parent(win_id);
+        let child_index =
+            parent_id.and_then(|pid| self.children(pid).iter().position(|&c| c == win_id));
+
+        self.remove_node(win_id);
+
+        if let (Some(pid), Some(idx)) = (parent_id, child_index) {
+            // Ignore errors from remove_container_size (node might not be a container)
+            let _ = self.remove_container_size(pid, idx);
+            self.cleanup_empty_container(pid);
+        }
+
+        true
+    }
+
+    /// Move focus in the given direction within the focused workspace
+    pub fn move_focus(&mut self, direction: Direction) -> bool {
+        let ws_id = match self.focused_workspace() {
+            Some(id) => id,
+            None => return false,
+        };
+
+        self.move_focus_in(ws_id, direction)
+    }
+
+    /// Change the layout of the focused container
+    pub fn split(&mut self, layout: Layout) {
+        let ws_id = match self.focused_workspace() {
+            Some(id) => id,
+            None => return,
+        };
+
+        if let Some(container_id) = self.find_focused_container(ws_id) {
+            let _ = self.set_layout(container_id, layout);
+        }
+    }
+
+    /// Toggle the floating state of a window
+    pub fn toggle_floating(&mut self, window_id: u64) -> bool {
+        let win_node_id = match self.find_window_by_id(window_id) {
+            Some(id) => id,
+            None => return false,
+        };
+        if let Some(node) = self.get_mut(win_node_id) {
+            if let NodeData::Window {
+                ref mut floating, ..
+            } = node.data
+            {
+                *floating = !*floating;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Find the window_id of the focused leaf window
+    pub fn focused_window_id(&self) -> Option<u64> {
+        let ws_id = self.focused_workspace()?;
+        self.find_focused_leaf(ws_id)
+    }
+
+    /// Move the focused window in the given direction
+    pub fn move_window(&mut self, direction: Direction) -> bool {
+        let ws_id = match self.focused_workspace() {
+            Some(id) => id,
+            None => return false,
+        };
+        self.move_window_in(ws_id, direction)
+    }
+
+    /// Move the focused window to the target workspace
+    pub fn move_to_workspace(&mut self, target_ws: &str) -> bool {
+        let win_id = match self.focused_window_id() {
+            Some(id) => id,
+            None => return false,
+        };
+
+        let target_ws_id = self.find_workspace_by_name_global(target_ws);
+        let target_ws_id = match target_ws_id {
+            Some(id) => id,
+            None => return false,
+        };
+
+        self.remove_window(win_id);
+        self.insert_window_into(target_ws_id, win_id);
+        true
+    }
+
+    /// Resize a node's proportion in its parent container
+    pub fn resize_container(
+        &mut self,
+        node_id: NodeId,
+        axis: ResizeAxis,
+        delta_ppt: f64,
+    ) -> bool {
+        let parent_id = match self.parent(node_id) {
+            Some(id) => id,
+            None => return false,
+        };
+
+        let layout_matches = match self.get(parent_id) {
+            Some(n) => match &n.data {
+                NodeData::Container { layout, .. } => matches!(
+                    (axis, layout),
+                    (ResizeAxis::Width, Layout::SplitH) | (ResizeAxis::Height, Layout::SplitV)
+                ),
+                _ => false,
+            },
+            None => false,
+        };
+        if !layout_matches {
+            return false;
+        }
+
+        let children: Vec<NodeId> = self.children(parent_id).to_vec();
+        let my_index = match children.iter().position(|&c| c == node_id) {
+            Some(i) => i,
+            None => return false,
+        };
+
+        let sibling_index = if my_index + 1 < children.len() {
+            my_index + 1
+        } else if my_index > 0 {
+            my_index - 1
+        } else {
+            return false;
+        };
+
+        if let Some(node) = self.get_mut(parent_id) {
+            if let NodeData::Container { ref mut sizes, .. } = node.data {
+                if my_index < sizes.len() && sibling_index < sizes.len() {
+                    let delta_norm = delta_ppt / 100.0;
+                    sizes[my_index] += delta_norm;
+                    sizes[sibling_index] -= delta_norm;
+                    if sizes[my_index] < 0.05 {
+                        let diff = 0.05 - sizes[my_index];
+                        sizes[my_index] = 0.05;
+                        sizes[sibling_index] -= diff;
+                    }
+                    if sizes[sibling_index] < 0.05 {
+                        let diff = 0.05 - sizes[sibling_index];
+                        sizes[sibling_index] = 0.05;
+                        sizes[my_index] -= diff;
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Move focus up to parent container
+    pub fn focus_parent(&mut self) -> bool {
+        let ws_id = match self.focused_workspace() {
+            Some(id) => id,
+            None => return false,
+        };
+
+        let current = self.focus_node.unwrap_or_else(|| {
+            self.find_focused_leaf_node(ws_id).unwrap_or(ws_id)
+        });
+
+        let parent = self.parent(current);
+        match parent {
+            Some(pid) if pid != self.root() => {
+                self.focus_node = Some(pid);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Move focus down to focused child
+    pub fn focus_child(&mut self) -> bool {
+        let current = match self.focus_node {
+            Some(id) => id,
+            None => return false,
+        };
+
+        // Extract what we need without cloning the whole NodeData
+        let action = match self.get(current) {
+            Some(n) => match &n.data {
+                NodeData::Container { focused_child, .. } => {
+                    let children = self.children(current).to_vec();
+                    let idx = (*focused_child).min(children.len().saturating_sub(1));
+                    Some(('c', children, idx))
+                }
+                NodeData::Workspace { .. } => {
+                    let children = self.children(current).to_vec();
+                    Some(('w', children, 0))
+                }
+                _ => None,
+            },
+            None => None,
+        };
+
+        match action {
+            Some(('c', children, idx)) => {
+                if let Some(&child_id) = children.get(idx) {
+                    let is_leaf = self
+                        .get(child_id)
+                        .map(|n| matches!(n.data, NodeData::Window { .. }))
+                        .unwrap_or(false);
+                    self.focus_node = if is_leaf { None } else { Some(child_id) };
+                    true
+                } else {
+                    false
+                }
+            }
+            Some(('w', children, _)) => {
+                if let Some(&child_id) = children.first() {
+                    let is_leaf = self
+                        .get(child_id)
+                        .map(|n| matches!(n.data, NodeData::Window { .. }))
+                        .unwrap_or(false);
+                    self.focus_node = if is_leaf { None } else { Some(child_id) };
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Set window floating state
+    pub fn set_floating(&mut self, window_id: u64, enable: bool) -> bool {
+        let win_node_id = match self.find_window_by_id(window_id) {
+            Some(id) => id,
+            None => return false,
+        };
+        if let Some(node) = self.get_mut(win_node_id) {
+            if let NodeData::Window {
+                ref mut floating, ..
+            } = node.data
+            {
+                *floating = enable;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Set window fullscreen state
+    pub fn set_fullscreen(&mut self, window_id: u64, enable: bool) -> bool {
+        let win_node_id = match self.find_window_by_id(window_id) {
+            Some(id) => id,
+            None => return false,
+        };
+        if let Some(node) = self.get_mut(win_node_id) {
+            if let NodeData::Window {
+                ref mut fullscreen,
+                ref mut saved_geometry,
+                ref geometry,
+                ..
+            } = node.data
+            {
+                if enable && !*fullscreen {
+                    *saved_geometry = Some(*geometry);
+                }
+                *fullscreen = enable;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Toggle window fullscreen state
+    pub fn toggle_fullscreen(&mut self, window_id: u64) -> bool {
+        let current = self.find_window_by_id(window_id).and_then(|id| {
+            self.get(id).and_then(|n| {
+                if let NodeData::Window { fullscreen, .. } = &n.data {
+                    Some(!*fullscreen)
+                } else {
+                    None
+                }
+            })
+        });
+        match current {
+            Some(new_state) => self.set_fullscreen(window_id, new_state),
+            None => false,
+        }
+    }
+
+    /// Public version of find_window_by_id (for external crates)
+    pub fn find_node_by_window_id(&self, window_id: u64) -> Option<NodeId> {
+        self.find_window_by_id(window_id)
+    }
+
+    /// Toggle focused container's layout type in cycle:
+    /// SplitH -> SplitV -> Tabbed -> Stacked -> SplitH
+    pub fn layout_toggle(&mut self) {
+        let ws_id = match self.focused_workspace() {
+            Some(id) => id,
+            None => return,
+        };
+
+        let container_id = match self.find_focused_container(ws_id) {
+            Some(id) => id,
+            None => return,
+        };
+
+        let next_layout = match self.get(container_id) {
+            Some(node) => match &node.data {
+                NodeData::Container { layout, .. } => match layout {
+                    Layout::SplitH => Layout::SplitV,
+                    Layout::SplitV => Layout::Tabbed,
+                    Layout::Tabbed => Layout::Stacked,
+                    Layout::Stacked => Layout::SplitH,
+                },
+                _ => return,
+            },
+            None => return,
+        };
+
+        let _ = self.set_layout(container_id, next_layout);
+    }
+
+    /// Set window sticky flag
+    pub fn set_sticky(&mut self, window_id: u64, enable: bool) -> bool {
+        let win_node_id = match self.find_window_by_id(window_id) {
+            Some(id) => id,
+            None => return false,
+        };
+        if let Some(node) = self.get_mut(win_node_id) {
+            if let NodeData::Window { ref mut sticky, .. } = node.data {
+                *sticky = enable;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Toggle window sticky flag
+    pub fn toggle_sticky(&mut self, window_id: u64) -> bool {
+        let current = self.find_window_by_id(window_id).and_then(|id| {
+            self.get(id).and_then(|n| {
+                if let NodeData::Window { sticky, .. } = &n.data {
+                    Some(!*sticky)
+                } else {
+                    None
+                }
+            })
+        });
+        match current {
+            Some(new_state) => self.set_sticky(window_id, new_state),
+            None => false,
+        }
+    }
+
+    /// Add a mark to a window
+    pub fn add_mark(&mut self, window_id: u64, mark: &str) -> bool {
+        let win_node_id = match self.find_window_by_id(window_id) {
+            Some(id) => id,
+            None => return false,
+        };
+        if let Some(node) = self.get_mut(win_node_id) {
+            if let NodeData::Window { ref mut marks, .. } = node.data {
+                if !marks.iter().any(|m| m == mark) {
+                    marks.push(mark.to_string());
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Remove a mark from a window. If `mark` is None, remove all marks.
+    pub fn remove_mark(&mut self, window_id: u64, mark: Option<&str>) -> bool {
+        let win_node_id = match self.find_window_by_id(window_id) {
+            Some(id) => id,
+            None => return false,
+        };
+        if let Some(node) = self.get_mut(win_node_id) {
+            if let NodeData::Window { ref mut marks, .. } = node.data {
+                match mark {
+                    Some(m) => marks.retain(|existing| existing != m),
+                    None => marks.clear(),
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get all marks on a window
+    pub fn get_marks(&self, window_id: u64) -> Vec<String> {
+        let win_node_id = match self.find_window_by_id(window_id) {
+            Some(id) => id,
+            None => return Vec::new(),
+        };
+        match self.get(win_node_id) {
+            Some(node) => match &node.data {
+                NodeData::Window { marks, .. } => marks.clone(),
+                _ => Vec::new(),
+            },
+            None => Vec::new(),
+        }
+    }
+
+    /// Set window fullscreen_global flag
+    pub fn set_fullscreen_global(&mut self, window_id: u64, enable: bool) -> bool {
+        let win_node_id = match self.find_window_by_id(window_id) {
+            Some(id) => id,
+            None => return false,
+        };
+        if let Some(node) = self.get_mut(win_node_id) {
+            if let NodeData::Window {
+                ref mut fullscreen_global,
+                ref mut saved_geometry,
+                ref geometry,
+                ..
+            } = node.data
+            {
+                if enable && !*fullscreen_global {
+                    *saved_geometry = Some(*geometry);
+                }
+                *fullscreen_global = enable;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Toggle window fullscreen_global flag
+    pub fn toggle_fullscreen_global(&mut self, window_id: u64) -> bool {
+        let current = self.find_window_by_id(window_id).and_then(|id| {
+            self.get(id).and_then(|n| {
+                if let NodeData::Window {
+                    fullscreen_global, ..
+                } = &n.data
+                {
+                    Some(!*fullscreen_global)
+                } else {
+                    None
+                }
+            })
+        });
+        match current {
+            Some(new_state) => self.set_fullscreen_global(window_id, new_state),
+            None => false,
+        }
+    }
+
+    /// Swap two sibling nodes under the same parent
+    pub fn swap_containers(&mut self, node_a: NodeId, node_b: NodeId) -> bool {
+        let parent_a = self.parent(node_a);
+        let parent_b = self.parent(node_b);
+        let parent_id = match (parent_a, parent_b) {
+            (Some(a), Some(b)) if a == b => a,
+            _ => return false,
+        };
+
+        let children: Vec<NodeId> = self.children(parent_id).to_vec();
+        let idx_a = match children.iter().position(|&c| c == node_a) {
+            Some(i) => i,
+            None => return false,
+        };
+        let idx_b = match children.iter().position(|&c| c == node_b) {
+            Some(i) => i,
+            None => return false,
+        };
+
+        if idx_a == idx_b {
+            return false;
+        }
+
+        if let Some(parent_node) = self.get_mut(parent_id) {
+            parent_node.children.swap(idx_a, idx_b);
+            if let NodeData::Container { ref mut sizes, .. } = parent_node.data {
+                if idx_a < sizes.len() && idx_b < sizes.len() {
+                    sizes.swap(idx_a, idx_b);
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Move focus to the next sibling in the current container
+    pub fn focus_next_sibling(&mut self) -> bool {
+        let ws_id = match self.focused_workspace() {
+            Some(id) => id,
+            None => return false,
+        };
+
+        let leaf_id = match self.find_focused_leaf_node(ws_id) {
+            Some(id) => id,
+            None => return false,
+        };
+
+        let parent_id = match self.parent(leaf_id) {
+            Some(id) => id,
+            None => return false,
+        };
+
+        let children: Vec<NodeId> = self.children(parent_id).to_vec();
+        let current_idx = match children.iter().position(|&c| c == leaf_id) {
+            Some(i) => i,
+            None => return false,
+        };
+
+        if current_idx + 1 >= children.len() {
+            return false;
+        }
+
+        let new_idx = current_idx + 1;
+        if let Some(node) = self.get_mut(parent_id) {
+            if let NodeData::Container {
+                ref mut focused_child,
+                ..
+            } = node.data
+            {
+                *focused_child = new_idx;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Move focus to the previous sibling in the current container
+    pub fn focus_prev_sibling(&mut self) -> bool {
+        let ws_id = match self.focused_workspace() {
+            Some(id) => id,
+            None => return false,
+        };
+
+        let leaf_id = match self.find_focused_leaf_node(ws_id) {
+            Some(id) => id,
+            None => return false,
+        };
+
+        let parent_id = match self.parent(leaf_id) {
+            Some(id) => id,
+            None => return false,
+        };
+
+        let children: Vec<NodeId> = self.children(parent_id).to_vec();
+        let current_idx = match children.iter().position(|&c| c == leaf_id) {
+            Some(i) => i,
+            None => return false,
+        };
+
+        if current_idx == 0 {
+            return false;
+        }
+
+        let new_idx = current_idx - 1;
+        if let Some(node) = self.get_mut(parent_id) {
+            if let NodeData::Container {
+                ref mut focused_child,
+                ..
+            } = node.data
+            {
+                *focused_child = new_idx;
+                return true;
+            }
+        }
+        false
+    }
+
+    // ── Private command helpers ──────────────────────────────────
+
+    fn insert_window_into(&mut self, parent_id: NodeId, window_id: u64) -> NodeId {
+        let new_win_data = NodeData::Window {
+            window_id,
+            floating: false,
+            fullscreen: false,
+            fullscreen_global: false,
+            sticky: false,
+            marks: Vec::new(),
+            geometry: Rect::new(0, 0, 0, 0),
+            saved_geometry: None,
+        };
+
+        let children: Vec<NodeId> = self.children(parent_id).to_vec();
+
+        if children.is_empty() {
+            return self.add_node(parent_id, new_win_data);
+        }
+
+        let focused_idx = match self.get(parent_id) {
+            Some(n) => match &n.data {
+                NodeData::Container { focused_child, .. } => *focused_child,
+                NodeData::Workspace { .. } => 0,
+                _ => 0,
+            },
+            None => 0,
+        };
+        let focused_id = children.get(focused_idx).copied().unwrap_or(children[0]);
+
+        let is_win = self
+            .get(focused_id)
+            .map(|n| matches!(n.data, NodeData::Window { .. }))
+            .unwrap_or(false);
+
+        if is_win {
+            self.wrap_with_container(parent_id, focused_id, focused_idx, new_win_data)
+        } else {
+            self.insert_window_into(focused_id, window_id)
+        }
+    }
+
+    fn wrap_with_container(
+        &mut self,
+        parent_id: NodeId,
+        existing_win: NodeId,
+        child_index: usize,
+        new_win_data: NodeData,
+    ) -> NodeId {
+        // 1. Remove existing window from parent's children
+        if let Some(parent_node) = self.get_mut(parent_id) {
+            parent_node.children.retain(|&c| c != existing_win);
+        }
+        let _ = self.remove_container_size(parent_id, child_index);
+
+        // 2. Orphan the existing window temporarily
+        if let Some(win_node) = self.get_mut(existing_win) {
+            win_node.parent = None;
+        }
+
+        // 3. Create new container under parent
+        let container_data = NodeData::Container {
+            layout: Layout::SplitH,
+            sizes: vec![1.0, 1.0],
+            focused_child: 1, // new window is focused
+        };
+        let container_id = self.add_node(parent_id, container_data);
+
+        // 4. Re-parent existing window under container
+        if let Some(win_node) = self.get_mut(existing_win) {
+            win_node.parent = Some(container_id);
+        }
+        if let Some(container_node) = self.get_mut(container_id) {
+            container_node.children.push(existing_win);
+        }
+
+        // 5. Add new window to container
+        let new_win_id = self.add_node(container_id, new_win_data);
+
+        // 6. Update parent's focused_child
+        let parent_children_len = self.get(parent_id).map(|n| n.children.len()).unwrap_or(0);
+
+        if let Some(parent_node) = self.get_mut(parent_id) {
+            if let NodeData::Container {
+                ref mut focused_child,
+                ref mut sizes,
+                ..
+            } = parent_node.data
+            {
+                *focused_child = parent_children_len.saturating_sub(1);
+                while sizes.len() < parent_children_len {
+                    sizes.push(1.0);
+                }
+            }
+        }
+
+        new_win_id
+    }
+
+    fn find_window_by_id(&self, window_id: u64) -> Option<NodeId> {
+        self.find_window_recursive(self.root(), window_id)
+    }
+
+    fn find_window_recursive(&self, node_id: NodeId, window_id: u64) -> Option<NodeId> {
+        let node = self.get(node_id)?;
+        if let NodeData::Window { window_id: wid, .. } = &node.data {
+            if *wid == window_id {
+                return Some(node_id);
+            }
+        }
+        let len = node.children.len();
+        for i in 0..len {
+            let child = self.children(node_id)[i];
+            if let Some(found) = self.find_window_recursive(child, window_id) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    fn cleanup_empty_container(&mut self, node_id: NodeId) {
+        let is_empty_container = self
+            .get(node_id)
+            .map(|n| matches!(n.data, NodeData::Container { .. }) && n.children.is_empty())
+            .unwrap_or(false);
+
+        if is_empty_container {
+            let parent = self.parent(node_id);
+            let child_index =
+                parent.and_then(|pid| self.children(pid).iter().position(|&c| c == node_id));
+            self.remove_node(node_id);
+            if let (Some(pid), Some(idx)) = (parent, child_index) {
+                let _ = self.remove_container_size(pid, idx);
+                self.cleanup_empty_container(pid);
+            }
+        }
+    }
+
+    fn move_focus_in(&mut self, node_id: NodeId, direction: Direction) -> bool {
+        // Extract info without cloning NodeData
+        let info = match self.get(node_id) {
+            Some(n) => match &n.data {
+                NodeData::Container {
+                    layout,
+                    focused_child,
+                    ..
+                } => {
+                    let layout = *layout;
+                    let focused = *focused_child;
+                    let children: Vec<NodeId> = self.children(node_id).to_vec();
+                    Some(('c', layout, focused, children))
+                }
+                NodeData::Workspace { .. } => {
+                    let children: Vec<NodeId> = self.children(node_id).to_vec();
+                    Some(('w', Layout::SplitH, 0, children))
+                }
+                _ => None,
+            },
+            None => None,
+        };
+
+        match info {
+            Some(('c', layout, focused, children)) => {
+                // Try recursing into focused child first
+                if let Some(&focused_id) = children.get(focused) {
+                    if self.move_focus_in(focused_id, direction) {
+                        return true;
+                    }
+                }
+
+                let can_move = matches!(
+                    (layout, direction),
+                    (Layout::SplitH, Direction::Left)
+                        | (Layout::SplitH, Direction::Right)
+                        | (Layout::SplitV, Direction::Up)
+                        | (Layout::SplitV, Direction::Down)
+                );
+
+                if can_move && !children.is_empty() {
+                    let new_focus = match direction {
+                        Direction::Left | Direction::Up => {
+                            if focused > 0 {
+                                focused - 1
+                            } else {
+                                return false;
+                            }
+                        }
+                        Direction::Right | Direction::Down => {
+                            if focused + 1 < children.len() {
+                                focused + 1
+                            } else {
+                                return false;
+                            }
+                        }
+                    };
+
+                    if let Some(node) = self.get_mut(node_id) {
+                        if let NodeData::Container {
+                            ref mut focused_child,
+                            ..
+                        } = node.data
+                        {
+                            *focused_child = new_focus;
+                        }
+                    }
+                    return true;
+                }
+                false
+            }
+            Some(('w', _, _, children)) => {
+                for &child in &children {
+                    if self.move_focus_in(child, direction) {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn find_focused_container(&self, node_id: NodeId) -> Option<NodeId> {
+        let info = match self.get(node_id) {
+            Some(n) => match &n.data {
+                NodeData::Container { focused_child, .. } => Some(('c', *focused_child)),
+                NodeData::Workspace { .. } => Some(('w', 0)),
+                _ => None,
+            },
+            None => None,
+        };
+
+        match info {
+            Some(('c', focused_child)) => {
+                let children: Vec<NodeId> = self.children(node_id).to_vec();
+                if let Some(&focused_id) = children.get(focused_child) {
+                    if let Some(deeper) = self.find_focused_container(focused_id) {
+                        return Some(deeper);
+                    }
+                }
+                Some(node_id)
+            }
+            Some(('w', _)) => {
+                let children: Vec<NodeId> = self.children(node_id).to_vec();
+                for &child in &children {
+                    if let Some(found) = self.find_focused_container(child) {
+                        return Some(found);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn find_focused_leaf(&self, node_id: NodeId) -> Option<u64> {
+        let node = self.get(node_id)?;
+        match &node.data {
+            NodeData::Window { window_id, .. } => Some(*window_id),
+            NodeData::Container { focused_child, .. } => {
+                let children = self.children(node_id);
+                let idx = (*focused_child).min(children.len().saturating_sub(1));
+                children.get(idx).and_then(|&c| self.find_focused_leaf(c))
+            }
+            _ => {
+                let children = self.children(node_id);
+                children.first().and_then(|&c| self.find_focused_leaf(c))
+            }
+        }
+    }
+
+    fn find_focused_leaf_node(&self, node_id: NodeId) -> Option<NodeId> {
+        let node = self.get(node_id)?;
+        match &node.data {
+            NodeData::Window { .. } => Some(node_id),
+            NodeData::Container { focused_child, .. } => {
+                let children = self.children(node_id);
+                let idx = (*focused_child).min(children.len().saturating_sub(1));
+                children
+                    .get(idx)
+                    .and_then(|&c| self.find_focused_leaf_node(c))
+            }
+            _ => {
+                let children = self.children(node_id);
+                children
+                    .first()
+                    .and_then(|&c| self.find_focused_leaf_node(c))
+            }
+        }
+    }
+
+    fn move_window_in(&mut self, node_id: NodeId, direction: Direction) -> bool {
+        let info = match self.get(node_id) {
+            Some(n) => match &n.data {
+                NodeData::Container {
+                    layout,
+                    focused_child,
+                    ..
+                } => {
+                    let layout = *layout;
+                    let focused = *focused_child;
+                    let children: Vec<NodeId> = self.children(node_id).to_vec();
+                    Some(('c', layout, focused, children))
+                }
+                NodeData::Workspace { .. } => {
+                    let children: Vec<NodeId> = self.children(node_id).to_vec();
+                    Some(('w', Layout::SplitH, 0, children))
+                }
+                _ => None,
+            },
+            None => None,
+        };
+
+        match info {
+            Some(('c', layout, focused, children)) => {
+                // Try recursing into focused child container first
+                if let Some(&focused_id) = children.get(focused) {
+                    let child_is_container = self
+                        .get(focused_id)
+                        .map(|n| matches!(n.data, NodeData::Container { .. }))
+                        .unwrap_or(false);
+                    if child_is_container && self.move_window_in(focused_id, direction) {
+                        return true;
+                    }
+                }
+
+                let can_move = matches!(
+                    (layout, direction),
+                    (Layout::SplitH, Direction::Left)
+                        | (Layout::SplitH, Direction::Right)
+                        | (Layout::SplitV, Direction::Up)
+                        | (Layout::SplitV, Direction::Down)
+                );
+
+                if can_move && !children.is_empty() {
+                    let new_pos = match direction {
+                        Direction::Left | Direction::Up => {
+                            if focused > 0 {
+                                focused - 1
+                            } else {
+                                return false;
+                            }
+                        }
+                        Direction::Right | Direction::Down => {
+                            if focused + 1 < children.len() {
+                                focused + 1
+                            } else {
+                                return false;
+                            }
+                        }
+                    };
+
+                    if let Some(node) = self.get_mut(node_id) {
+                        node.children.swap(focused, new_pos);
+                        if let NodeData::Container {
+                            ref mut sizes,
+                            ref mut focused_child,
+                            ..
+                        } = node.data
+                        {
+                            if focused < sizes.len() && new_pos < sizes.len() {
+                                sizes.swap(focused, new_pos);
+                            }
+                            *focused_child = new_pos;
+                        }
+                    }
+                    return true;
+                }
+                false
+            }
+            Some(('w', _, _, children)) => {
+                for &child in &children {
+                    if self.move_window_in(child, direction) {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn find_workspace_by_name_global(&self, name: &str) -> Option<NodeId> {
+        let root = self.root();
+        for &output_id in self.children(root) {
+            for &ws_id in self.children(output_id) {
+                if let Some(node) = self.get(ws_id) {
+                    if let NodeData::Workspace { name: ws_name, .. } = &node.data {
+                        if ws_name == name {
+                            return Some(ws_id);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+// ── Layout methods ──────────────────────────────────────────────
+
+/// Shrink a rectangle by `amount` pixels on all sides
+pub fn shrink_rect(r: Rect, amount: i32) -> Rect {
+    if amount == 0 {
+        return r;
+    }
+    Rect {
+        x: r.x + amount,
+        y: r.y + amount,
+        width: (r.width - 2 * amount).max(1),
+        height: (r.height - 2 * amount).max(1),
+    }
+}
+
+impl Tree {
+    /// Top-down recursive layout computation from node_id
+    pub fn compute_layout(&mut self, node_id: NodeId, available: Rect, gaps: &GapsConfig) {
+        // Extract lightweight info to avoid borrowing issues
+        let info = match self.get(node_id) {
+            Some(n) => match &n.data {
+                NodeData::Root => {
+                    let children: Vec<NodeId> = n.children.to_vec();
+                    LayoutInfo::PassThrough {
+                        children,
+                        area: available,
+                    }
+                }
+                NodeData::Output { geometry, .. } => {
+                    let children: Vec<NodeId> = n.children.to_vec();
+                    LayoutInfo::PassThrough {
+                        children,
+                        area: *geometry,
+                    }
+                }
+                NodeData::Workspace { .. } => {
+                    let children: Vec<NodeId> = n.children.to_vec();
+                    let inner_rect = shrink_rect(available, gaps.outer);
+                    LayoutInfo::PassThrough {
+                        children,
+                        area: inner_rect,
+                    }
+                }
+                NodeData::Container {
+                    layout,
+                    sizes,
+                    focused_child,
+                } => {
+                    let children: Vec<NodeId> = n.children.to_vec();
+                    LayoutInfo::Split {
+                        layout: *layout,
+                        sizes: sizes.clone(),
+                        focused_child: *focused_child,
+                        children,
+                    }
+                }
+                NodeData::Window { floating, .. } => LayoutInfo::Leaf {
+                    floating: *floating,
+                },
+            },
+            None => LayoutInfo::Skip,
+        };
+
+        match info {
+            LayoutInfo::PassThrough { children, area } => {
+                for child in children {
+                    self.compute_layout(child, area, gaps);
+                }
+            }
+            LayoutInfo::Split {
+                layout,
+                sizes,
+                focused_child,
+                children,
+            } => {
+                if children.is_empty() {
+                    return;
+                }
+                match layout {
+                    Layout::SplitH => {
+                        self.layout_split_h(&children, &sizes, available, gaps);
+                    }
+                    Layout::SplitV => {
+                        self.layout_split_v(&children, &sizes, available, gaps);
+                    }
+                    Layout::Tabbed | Layout::Stacked => {
+                        let focus_idx = focused_child.min(children.len().saturating_sub(1));
+                        let focused_id = children[focus_idx];
+                        self.compute_layout(focused_id, available, gaps);
+                    }
+                }
+            }
+            LayoutInfo::Leaf { floating } => {
+                if !floating {
+                    let final_rect = shrink_rect(available, gaps.inner / 2);
+                    if let Some(node) = self.get_mut(node_id) {
+                        if let NodeData::Window {
+                            ref mut geometry, ..
+                        } = node.data
+                        {
+                            *geometry = final_rect;
+                        }
+                    }
+                }
+            }
+            LayoutInfo::Skip => {}
+        }
+    }
+
+    /// Collect all window geometries in the tree
+    pub fn window_geometries(&self) -> Vec<(u64, Rect)> {
+        let mut result = Vec::new();
+        self.collect_windows(self.root(), &mut result);
+        result
+    }
+
+    fn layout_split_h(
+        &mut self,
+        children: &[NodeId],
+        sizes: &[f64],
+        available: Rect,
+        gaps: &GapsConfig,
+    ) {
+        let total: f64 = if sizes.is_empty() {
+            0.0
+        } else {
+            sizes.iter().sum()
+        };
+
+        let n = children.len();
+        let mut x_offset = available.x;
+
+        for (i, &child) in children.iter().enumerate() {
+            let ratio = if total > 0.0 && i < sizes.len() {
+                sizes[i] / total
+            } else {
+                1.0 / n as f64
+            };
+
+            let child_width = if i == n - 1 {
+                available.x + available.width - x_offset
+            } else {
+                (available.width as f64 * ratio).round() as i32
+            };
+
+            let child_rect = Rect {
+                x: x_offset,
+                y: available.y,
+                width: child_width.max(1),
+                height: available.height,
+            };
+
+            self.compute_layout(child, child_rect, gaps);
+            x_offset += child_width.max(1);
+        }
+    }
+
+    fn layout_split_v(
+        &mut self,
+        children: &[NodeId],
+        sizes: &[f64],
+        available: Rect,
+        gaps: &GapsConfig,
+    ) {
+        let total: f64 = if sizes.is_empty() {
+            0.0
+        } else {
+            sizes.iter().sum()
+        };
+
+        let n = children.len();
+        let mut y_offset = available.y;
+
+        for (i, &child) in children.iter().enumerate() {
+            let ratio = if total > 0.0 && i < sizes.len() {
+                sizes[i] / total
+            } else {
+                1.0 / n as f64
+            };
+
+            let child_height = if i == n - 1 {
+                available.y + available.height - y_offset
+            } else {
+                (available.height as f64 * ratio).round() as i32
+            };
+
+            let child_rect = Rect {
+                x: available.x,
+                y: y_offset,
+                width: available.width,
+                height: child_height.max(1),
+            };
+
+            self.compute_layout(child, child_rect, gaps);
+            y_offset += child_height.max(1);
+        }
+    }
+
+    fn collect_windows(&self, node_id: NodeId, out: &mut Vec<(u64, Rect)>) {
+        if let Some(node) = self.get(node_id) {
+            match &node.data {
+                NodeData::Window {
+                    window_id,
+                    geometry,
+                    ..
+                } => {
+                    out.push((*window_id, *geometry));
+                }
+                _ => {
+                    let len = node.children.len();
+                    for i in 0..len {
+                        let child = self.children(node_id)[i];
+                        self.collect_windows(child, out);
+                    }
+                }
+            }
+        }
     }
 }
 

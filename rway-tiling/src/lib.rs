@@ -1,17 +1,11 @@
-pub mod commands;
-pub mod container;
-pub mod layout;
-/// rway-tiling：纯 Rust 瓦片布局引擎（零外部依赖）
-///
-/// 模块结构：
-/// - [`tree`]      — Arena 分配的 N 叉树（核心数据结构）
-/// - [`container`] — 容器辅助操作（sizes、focused_child 管理）
-/// - [`layout`]    — 布局算法（SplitH/SplitV/Tabbed/Stacked）
-/// - [`workspace`] — 工作区与输出管理
-/// - [`commands`]  — 高级命令（插入窗口、移除窗口、移动焦点、切换布局）
 pub mod tree;
-pub mod workspace;
+pub mod error;
+pub mod container;
+pub use tree::{Direction, GapsConfig, Layout, Node, NodeData, NodeId, Rect, ResizeAxis, Tree};
+pub use error::TilingError;
+pub use container::normalize_sizes;
 
-// 重导出最常用的公开类型，方便外部 crate 使用
-pub use commands::Direction;
-pub use tree::{GapsConfig, Layout, Node, NodeData, NodeId, Rect, Tree};
+// Legacy module stubs - all functions migrated to impl Tree methods
+pub mod workspace;
+pub mod commands;
+pub mod layout;
