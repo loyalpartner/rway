@@ -1121,7 +1121,12 @@ impl Tree {
 
     // ── Private command helpers ──────────────────────────────────
 
-    fn insert_window_into(&mut self, parent_id: NodeId, window_id: u64, split_layout: Layout) -> NodeId {
+    fn insert_window_into(
+        &mut self,
+        parent_id: NodeId,
+        window_id: u64,
+        split_layout: Layout,
+    ) -> NodeId {
         let new_win_data = NodeData::Window {
             window_id,
             floating: false,
@@ -1139,6 +1144,12 @@ impl Tree {
             return self.add_node(parent_id, new_win_data);
         }
 
+        // Check if parent is a Container with the same layout direction
+        let parent_layout = self.get(parent_id).and_then(|n| match &n.data {
+            NodeData::Container { layout, .. } => Some(*layout),
+            _ => None,
+        });
+
         let focused_idx = match self.get(parent_id) {
             Some(n) => match &n.data {
                 NodeData::Container { focused_child, .. } => *focused_child,
@@ -1155,7 +1166,29 @@ impl Tree {
             .unwrap_or(false);
 
         if is_win {
-            self.wrap_with_container(parent_id, focused_id, focused_idx, new_win_data, split_layout)
+            // Sway behavior: if parent container has the same layout direction,
+            // add new window as a sibling (not nested). Only wrap in a new
+            // sub-container when the split direction differs.
+            if parent_layout == Some(split_layout) {
+                // Add as sibling in the same container — equal share
+                let new_id = self.add_node(parent_id, new_win_data);
+                let _ = self.add_container_size(parent_id);
+                // Update focused_child to the new window
+                let new_count = self.children(parent_id).len();
+                if let Some(node) = self.get_mut(parent_id) {
+                    if let NodeData::Container { ref mut focused_child, .. } = node.data {
+                        *focused_child = new_count - 1;
+                    }
+                }
+                return new_id;
+            }
+            self.wrap_with_container(
+                parent_id,
+                focused_id,
+                focused_idx,
+                new_win_data,
+                split_layout,
+            )
         } else {
             self.insert_window_into(focused_id, window_id, split_layout)
         }
@@ -2117,5 +2150,100 @@ mod tests {
         }
         // 最终只剩 root
         assert_eq!(tree.node_count(), 1);
+    }
+
+    // ── Sway-compatible sibling insertion tests ────────────────
+
+    fn make_ws_tree() -> Tree {
+        let mut tree = Tree::new();
+        let root = tree.root();
+        let out = tree.add_node(root, output_data("eDP-1"));
+        tree.add_node(out, NodeData::Workspace {
+            name: "1".into(),
+            output: out,
+            is_visible: true,
+        });
+        tree
+    }
+
+    #[test]
+    fn three_windows_same_direction_are_siblings() {
+        // In Sway: opening 3 windows with same split direction
+        // should produce [A, B, C] as siblings, not [A, [B, C]]
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+        tree.insert_window(3);
+
+        // Find the container holding the windows
+        let ws = tree.focused_workspace().unwrap();
+        let container_id = tree.children(ws)[0];
+        let siblings = tree.children(container_id);
+
+        // All 3 windows should be direct children of the same container
+        assert_eq!(siblings.len(), 3, "3 windows should be siblings, not nested");
+    }
+
+    #[test]
+    fn three_siblings_get_equal_layout() {
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+        tree.insert_window(3);
+
+        let root = tree.root();
+        tree.compute_layout(root, sample_rect(), &GapsConfig::default());
+        let geoms = tree.window_geometries();
+
+        assert_eq!(geoms.len(), 3);
+        // Each window should get ~1/3 of 1920 = 640
+        for (_, g) in &geoms {
+            assert!(g.width > 600 && g.width < 700,
+                "each window should be ~640px wide, got {}", g.width);
+        }
+    }
+
+    #[test]
+    fn remove_window_siblings_redistribute_equally() {
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+        tree.insert_window(3);
+
+        // Remove middle window
+        tree.remove_window(2);
+
+        let root = tree.root();
+        tree.compute_layout(root, sample_rect(), &GapsConfig::default());
+        let geoms = tree.window_geometries();
+
+        assert_eq!(geoms.len(), 2);
+        // Each should get 50% = 960px
+        for (_, g) in &geoms {
+            assert_eq!(g.width, 960, "after removing one, each should get half");
+        }
+    }
+
+    #[test]
+    fn different_split_direction_creates_nesting() {
+        // splitv after splith should create a nested container
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2); // default SplitH: [1 | 2]
+
+        // Now insert with SplitV — should nest under focused window
+        tree.insert_window_with_layout(3, Layout::SplitV);
+
+        // Tree should be: Container(SplitH) [ win1, Container(SplitV) [win2, win3] ]
+        let ws = tree.focused_workspace().unwrap();
+        let top_container = tree.children(ws)[0];
+        let top_children = tree.children(top_container);
+        assert_eq!(top_children.len(), 2, "top level should still have 2 children");
+
+        // One of them should be a nested SplitV container
+        let nested = top_children.iter().find(|&&id| {
+            tree.get(id).map(|n| matches!(n.data, NodeData::Container { layout: Layout::SplitV, .. })).unwrap_or(false)
+        });
+        assert!(nested.is_some(), "should have a nested SplitV container");
     }
 }
