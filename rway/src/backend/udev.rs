@@ -63,6 +63,7 @@ use smithay::{
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 use tracing::{debug, error, info, trace, warn};
 
+use crate::border::{window_borders, BorderConfig};
 use crate::state::RwayState;
 
 // 支持的颜色格式：优先 10-bit，退而求其次 8-bit
@@ -1151,18 +1152,44 @@ fn render_surface(
     >(&mut renderer, [&state.space], &output, 1.0)
     .unwrap_or_default();
 
-    // 组合渲染元素：光标（z-order 最高）+ 窗口
+    // Build border config from user settings
+    let border_config = BorderConfig::from_config(&state.config);
+    let bw = border_config.width;
+    let scale = Scale::from(1.0_f64);
+    let focused_surface = state.seat.get_keyboard().and_then(|kb| kb.current_focus());
+
     let mut elements: Vec<UdevRenderElement<'_>> = Vec::with_capacity(space_elements.len() + 1);
 
-    // 光标元素：Smithay DRM compositor 会自动检测 Kind::Cursor 并分配到硬件光标平面
+    // Cursor element (DRM compositor auto-assigns to hardware cursor plane)
     if !matches!(
         state.cursor_status,
         smithay::input::pointer::CursorImageStatus::Hidden
     ) {
         if let Some(pointer) = state.seat.get_pointer() {
             let pos = pointer.current_location();
-            let cursor_el = crate::cursor::cursor_square_element(pos, Scale::from(1.0));
+            let cursor_el = crate::cursor::cursor_square_element(pos, scale);
             elements.push(UdevRenderElement::Cursor(cursor_el));
+        }
+    }
+
+    // Border elements: expand content rect back to container rect, draw inside
+    for window in state.space.elements() {
+        let is_focused = focused_surface
+            .as_ref()
+            .is_some_and(|fs| window.toplevel().is_some_and(|tl| tl.wl_surface() == fs));
+        let color = if is_focused {
+            border_config.focused_color
+        } else {
+            border_config.unfocused_color
+        };
+        if let Some(content_geo) = state.space.element_geometry(window) {
+            let container_geo = smithay::utils::Rectangle::new(
+                (content_geo.loc.x - bw, content_geo.loc.y - bw).into(),
+                (content_geo.size.w + 2 * bw, content_geo.size.h + 2 * bw).into(),
+            );
+            for border_el in window_borders(container_geo, color, bw, scale) {
+                elements.push(UdevRenderElement::Cursor(border_el));
+            }
         }
     }
 

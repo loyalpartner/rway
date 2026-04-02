@@ -62,8 +62,8 @@ pub(crate) fn init_winit(
     // 损坏跟踪器：只重绘脏区域，提高性能
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
-    // 边框配置（可读取自 config，此处使用默认值）
-    let border_config = BorderConfig::default();
+    // 边框配置从用户 config 读取
+    let border_config = BorderConfig::from_config(&state.config);
 
     // 将 winit 事件源注册到 calloop 事件循环
     event_loop
@@ -104,28 +104,32 @@ pub(crate) fn init_winit(
                         let focused_surface =
                             state.seat.get_keyboard().and_then(|kb| kb.current_focus());
 
-                        // 为每个已映射窗口生成边框渲染元素（位于 custom_elements 层，绘制在窗口下方）
-                        // custom_elements 先于 space 元素渲染（z-order 最低），因此边框会被窗口内容遮盖。
-                        // 由于边框绘制在窗口外侧（负偏移），不会与窗口内容重叠，效果正确。
+                        // Generate border elements for each window.
+                        // Space geometry is the content rect (inset by bw);
+                        // expand back to full container rect for border drawing.
+                        let bw = border_config.width;
                         let mut custom_elements: Vec<_> = state
                             .space
                             .elements()
                             .flat_map(|window| {
-                                // 判断该窗口是否持有键盘焦点
                                 let is_focused = focused_surface.as_ref().is_some_and(|fs| {
                                     window.toplevel().is_some_and(|tl| tl.wl_surface() == fs)
                                 });
 
-                                // 根据焦点状态选择边框颜色
                                 let color = if is_focused {
                                     border_config.focused_color
                                 } else {
                                     border_config.unfocused_color
                                 };
 
-                                // 获取窗口在 space 中的逻辑几何（位置 + 尺寸）
-                                if let Some(geo) = state.space.element_geometry(window) {
-                                    window_borders(geo, color, border_config.width, scale)
+                                if let Some(content_geo) = state.space.element_geometry(window) {
+                                    // Reconstruct container rect from content rect
+                                    let container_geo = smithay::utils::Rectangle::new(
+                                        (content_geo.loc.x - bw, content_geo.loc.y - bw).into(),
+                                        (content_geo.size.w + 2 * bw, content_geo.size.h + 2 * bw)
+                                            .into(),
+                                    );
+                                    window_borders(container_geo, color, bw, scale)
                                 } else {
                                     vec![]
                                 }

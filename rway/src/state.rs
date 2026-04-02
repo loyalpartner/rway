@@ -241,6 +241,14 @@ impl RwayState {
         workspace::add_workspace(&mut self.tiling, output_id, "1");
     }
 
+    /// Return current border width from config (0 for BorderStyle::None).
+    pub(crate) fn border_width(&self) -> i32 {
+        match &self.config.default_border {
+            rway_config::BorderStyle::Normal(w) | rway_config::BorderStyle::Pixel(w) => *w as i32,
+            rway_config::BorderStyle::None => 0,
+        }
+    }
+
     /// 重新计算平铺布局并更新 Space 中窗口的位置和大小
     pub fn relayout(&mut self) {
         // 获取输出的非 exclusive 区域（扣除 waybar 等 layer shell 客户端占用的空间）
@@ -266,24 +274,30 @@ impl RwayState {
         };
         layout::compute_layout(&mut self.tiling, root, available, &gaps);
 
+        // Border width: window content is inset by this amount on each side
+        let bw = self.border_width();
+
         // 获取所有窗口的几何并设置动画目标
         let geometries = layout::get_window_geometries(&self.tiling);
         for (window_id, rect) in geometries {
-            // 设置动画目标位置（由 AnimationManager 决定是否启动插值动画）
+            // Animation target = full container rect (including border area)
             self.animations
                 .set_target(window_id, rect.x, rect.y, rect.width, rect.height);
 
             if let Some(window) = self.window_map.get(&window_id) {
-                // 配置窗口的目标大小（客户端需要最终尺寸来渲染内容）
+                // Window surface size = container size minus borders on each side
+                let content_w = (rect.width - 2 * bw).max(1);
+                let content_h = (rect.height - 2 * bw).max(1);
                 if let Some(toplevel) = window.toplevel() {
                     toplevel.with_pending_state(|state| {
-                        state.size = Some((rect.width, rect.height).into());
+                        state.size = Some((content_w, content_h).into());
                     });
                     toplevel.send_pending_configure();
                 }
-                // 立即更新 Space 位置（用动画当前位置或直接用目标位置）
+                // Map at inset position (animation position + border_width)
                 if let Some((x, y, _w, _h)) = self.animations.get_position(window_id) {
-                    self.space.map_element(window.clone(), (x, y), false);
+                    self.space
+                        .map_element(window.clone(), (x + bw, y + bw), false);
                 }
             }
         }
@@ -360,11 +374,13 @@ impl RwayState {
     /// Returns true if animations are still active (caller should request redraw)
     pub fn update_animations(&mut self) -> bool {
         let has_active = self.animations.tick();
+        let bw = self.border_width();
 
-        // Apply interpolated positions to Space
+        // Apply interpolated positions to Space (inset by border_width)
         for (&window_id, window) in &self.window_map {
             if let Some((x, y, _w, _h)) = self.animations.get_position(window_id) {
-                self.space.map_element(window.clone(), (x, y), false);
+                self.space
+                    .map_element(window.clone(), (x + bw, y + bw), false);
             }
         }
 
