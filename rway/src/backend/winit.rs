@@ -84,13 +84,14 @@ pub(crate) fn init_winit(
                 }
 
                 WinitEvent::Input(event) => {
-                    // 转发输入事件到 RwayState 的输入处理器
                     state.process_input_event(event);
+                    // Input changed state — need to redraw
+                    backend.window().request_redraw();
                 }
 
                 WinitEvent::Redraw => {
-                    // 推进动画插值，更新窗口在 Space 中的渲染位置
-                    state.update_animations();
+                    let has_animations = state.update_animations();
+                    state.needs_redraw = false;
 
                     let size = backend.window_size();
                     let damage = Rectangle::from_size(size);
@@ -190,8 +191,10 @@ pub(crate) fn init_winit(
 
                     let _ = state.display_handle.flush_clients();
 
-                    // 请求下一帧重绘（驱动渲染循环）
-                    backend.window().request_redraw();
+                    // Only request next frame if there's active work
+                    if has_animations || state.needs_redraw {
+                        backend.window().request_redraw();
+                    }
                 }
 
                 WinitEvent::CloseRequested => {

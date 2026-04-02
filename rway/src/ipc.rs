@@ -21,12 +21,12 @@ pub(crate) fn register_ipc_source(handle: &LoopHandle<'static, RwayState>) {
     handle
         .insert_source(
             smithay::reexports::calloop::timer::Timer::from_duration(
-                std::time::Duration::from_millis(50),
+                std::time::Duration::from_millis(200),
             ),
             |_, _, state| {
                 poll_ipc_connections(state);
                 smithay::reexports::calloop::timer::TimeoutAction::ToDuration(
-                    std::time::Duration::from_millis(50),
+                    std::time::Duration::from_millis(200),
                 )
             },
         )

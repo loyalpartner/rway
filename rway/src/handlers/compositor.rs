@@ -55,17 +55,20 @@ impl CompositorHandler for RwayState {
             }
         }
 
-        // 3. 处理 XDG Shell 初始配置
+        // 3. Handle XDG Shell initial configure
         xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
 
-        // 4. 处理调整大小抓取的提交后逻辑
+        // 4. Handle resize grab post-commit logic
         resize_grab::handle_commit(&mut self.space, surface);
 
-        // 5. 处理 layer surface 提交：重新安排层布局
+        // 5. Handle layer surface commit: rearrange layer layout
         if let Some(output) = self.space.outputs().next().cloned() {
             let mut layer_map = layer_map_for_output(&output);
             layer_map.arrange();
         }
+
+        // 6. Schedule redraw — client submitted new content
+        self.needs_redraw = true;
     }
 }
 

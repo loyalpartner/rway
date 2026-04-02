@@ -84,6 +84,9 @@ pub struct RwayState {
     // Event loop handle (for scheduling idle callbacks and timers)
     pub(crate) loop_handle: LoopHandle<'static, RwayState>,
 
+    // Redraw scheduling — set to true when content changes, cleared after rendering
+    pub(crate) needs_redraw: bool,
+
     // IPC
     pub(crate) ipc_server: Option<rway_ipc::IpcServer>,
 
@@ -204,6 +207,7 @@ impl RwayState {
             loop_handle,
 
             config,
+            needs_redraw: true,
             ipc_server,
 
             #[cfg(feature = "xwayland")]
@@ -279,6 +283,9 @@ impl RwayState {
                 }
             }
         }
+
+        // Layout changed — schedule redraw
+        self.needs_redraw = true;
     }
 
     /// 确保当前聚焦的工作区在一个活跃（有映射到 Space 中的）输出上。
@@ -346,15 +353,18 @@ impl RwayState {
     ///
     /// 应在渲染之前调用。动画管理器会根据时间推进所有活跃动画的插值，
     /// 然后将计算出的中间帧位置应用到 Space。
-    pub fn update_animations(&mut self) {
-        self.animations.tick();
+    /// Returns true if animations are still active (caller should request redraw)
+    pub fn update_animations(&mut self) -> bool {
+        let has_active = self.animations.tick();
 
-        // 将动画计算出的当前位置应用到 Space
+        // Apply interpolated positions to Space
         for (&window_id, window) in &self.window_map {
             if let Some((x, y, _w, _h)) = self.animations.get_position(window_id) {
                 self.space.map_element(window.clone(), (x, y), false);
             }
         }
+
+        has_active
     }
 
     /// 检测并清理已关闭的窗口：从平铺树和 window_map 中移除死亡窗口
