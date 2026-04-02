@@ -43,9 +43,11 @@ impl XdgShellHandler for RwayState {
         // 确保有活跃输出上的工作区可用
         self.ensure_active_workspace();
 
-        // 分配窗口 ID 并插入平铺树
+        // Allocate window ID and insert into tiling tree
+        // Use pending_split direction if set (from splith/splitv command), otherwise default SplitH
         let window_id = self.alloc_window_id();
-        rway_tiling::commands::insert_window(&mut self.tiling, window_id);
+        let split_layout = self.pending_split.take().unwrap_or(rway_tiling::Layout::SplitH);
+        self.tiling.insert_window_with_layout(window_id, split_layout);
         self.window_map.insert(window_id, window.clone());
 
         // 映射到 Space 并提升到顶层
@@ -82,11 +84,15 @@ impl XdgShellHandler for RwayState {
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
-        let Some(seat) = Seat::from_resource(&seat) else { return };
+        let Some(seat) = Seat::from_resource(&seat) else {
+            return;
+        };
         let wl_surface = surface.wl_surface();
 
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
-            let Some(pointer) = seat.get_pointer() else { return };
+            let Some(pointer) = seat.get_pointer() else {
+                return;
+            };
 
             let Some(window) = self
                 .space
@@ -100,7 +106,9 @@ impl XdgShellHandler for RwayState {
             else {
                 return;
             };
-            let Some(initial_window_location) = self.space.element_location(&window) else { return };
+            let Some(initial_window_location) = self.space.element_location(&window) else {
+                return;
+            };
 
             let grab = MoveSurfaceGrab {
                 start_data,
@@ -119,11 +127,15 @@ impl XdgShellHandler for RwayState {
         serial: Serial,
         edges: xdg_toplevel::ResizeEdge,
     ) {
-        let Some(seat) = Seat::from_resource(&seat) else { return };
+        let Some(seat) = Seat::from_resource(&seat) else {
+            return;
+        };
         let wl_surface = surface.wl_surface();
 
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
-            let Some(pointer) = seat.get_pointer() else { return };
+            let Some(pointer) = seat.get_pointer() else {
+                return;
+            };
 
             let Some(window) = self
                 .space
@@ -137,7 +149,9 @@ impl XdgShellHandler for RwayState {
             else {
                 return;
             };
-            let Some(initial_window_location) = self.space.element_location(&window) else { return };
+            let Some(initial_window_location) = self.space.element_location(&window) else {
+                return;
+            };
             let initial_window_size = window.geometry().size;
 
             surface.with_pending_state(|state| {
@@ -246,9 +260,15 @@ impl RwayState {
             return;
         };
 
-        let Some(output) = self.space.outputs().next() else { return };
-        let Some(output_geo) = self.space.output_geometry(output) else { return };
-        let Some(window_geo) = self.space.element_geometry(window) else { return };
+        let Some(output) = self.space.outputs().next() else {
+            return;
+        };
+        let Some(output_geo) = self.space.output_geometry(output) else {
+            return;
+        };
+        let Some(window_geo) = self.space.element_geometry(window) else {
+            return;
+        };
 
         // 目标几何是相对于父窗口的
         let mut target = output_geo;

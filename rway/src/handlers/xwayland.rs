@@ -66,7 +66,8 @@ impl XwmHandler for RwayState {
         // 创建统一的 Window 对象并插入平铺树
         let win = Window::new_x11_window(window.clone());
         let window_id = self.alloc_window_id();
-        rway_tiling::commands::insert_window(&mut self.tiling, window_id);
+        let split_layout = self.pending_split.take().unwrap_or(rway_tiling::Layout::SplitH);
+        self.tiling.insert_window_with_layout(window_id, split_layout);
         self.window_map.insert(window_id, win.clone());
         self.space.map_element(win.clone(), (0, 0), false);
 

@@ -300,11 +300,7 @@ impl Tree {
     }
 
     /// Set the layout type of a container
-    pub fn set_layout(
-        &mut self,
-        container: NodeId,
-        layout: Layout,
-    ) -> Result<(), TilingError> {
+    pub fn set_layout(&mut self, container: NodeId, layout: Layout) -> Result<(), TilingError> {
         let node = self
             .get_mut(container)
             .ok_or(TilingError::NodeNotFound(container))?;
@@ -544,12 +540,20 @@ impl Tree {
 impl Tree {
     /// Insert a new window in the focused workspace's focused position
     pub fn insert_window(&mut self, window_id: u64) -> NodeId {
+        self.insert_window_with_layout(window_id, Layout::SplitH)
+    }
+
+    /// Insert a new window using the specified layout for the wrapping container
+    ///
+    /// In Sway, `splith`/`splitv` sets the direction for the next window insertion.
+    /// This method allows specifying that direction.
+    pub fn insert_window_with_layout(&mut self, window_id: u64, layout: Layout) -> NodeId {
         let ws_id = match self.focused_workspace() {
             Some(id) => id,
             None => self.root(),
         };
 
-        self.insert_window_into(ws_id, window_id)
+        self.insert_window_into(ws_id, window_id, layout)
     }
 
     /// Remove the window with the given window_id from the tree
@@ -643,17 +647,12 @@ impl Tree {
         };
 
         self.remove_window(win_id);
-        self.insert_window_into(target_ws_id, win_id);
+        self.insert_window_into(target_ws_id, win_id, Layout::SplitH);
         true
     }
 
     /// Resize a node's proportion in its parent container
-    pub fn resize_container(
-        &mut self,
-        node_id: NodeId,
-        axis: ResizeAxis,
-        delta_ppt: f64,
-    ) -> bool {
+    pub fn resize_container(&mut self, node_id: NodeId, axis: ResizeAxis, delta_ppt: f64) -> bool {
         let parent_id = match self.parent(node_id) {
             Some(id) => id,
             None => return false,
@@ -717,9 +716,9 @@ impl Tree {
             None => return false,
         };
 
-        let current = self.focus_node.unwrap_or_else(|| {
-            self.find_focused_leaf_node(ws_id).unwrap_or(ws_id)
-        });
+        let current = self
+            .focus_node
+            .unwrap_or_else(|| self.find_focused_leaf_node(ws_id).unwrap_or(ws_id));
 
         let parent = self.parent(current);
         match parent {
@@ -1122,7 +1121,7 @@ impl Tree {
 
     // ── Private command helpers ──────────────────────────────────
 
-    fn insert_window_into(&mut self, parent_id: NodeId, window_id: u64) -> NodeId {
+    fn insert_window_into(&mut self, parent_id: NodeId, window_id: u64, split_layout: Layout) -> NodeId {
         let new_win_data = NodeData::Window {
             window_id,
             floating: false,
@@ -1156,9 +1155,9 @@ impl Tree {
             .unwrap_or(false);
 
         if is_win {
-            self.wrap_with_container(parent_id, focused_id, focused_idx, new_win_data)
+            self.wrap_with_container(parent_id, focused_id, focused_idx, new_win_data, split_layout)
         } else {
-            self.insert_window_into(focused_id, window_id)
+            self.insert_window_into(focused_id, window_id, split_layout)
         }
     }
 
@@ -1168,6 +1167,7 @@ impl Tree {
         existing_win: NodeId,
         child_index: usize,
         new_win_data: NodeData,
+        split_layout: Layout,
     ) -> NodeId {
         // 1. Remove existing window from parent's children
         if let Some(parent_node) = self.get_mut(parent_id) {
@@ -1180,9 +1180,9 @@ impl Tree {
             win_node.parent = None;
         }
 
-        // 3. Create new container under parent
+        // 3. Create new container under parent with the specified split direction
         let container_data = NodeData::Container {
-            layout: Layout::SplitH,
+            layout: split_layout,
             sizes: vec![1.0, 1.0],
             focused_child: 1, // new window is focused
         };

@@ -78,6 +78,9 @@ pub struct RwayState {
     // Cursor state (updated by client via SeatHandler::cursor_image callback)
     pub(crate) cursor_status: CursorImageStatus,
 
+    // Pending split direction for next window insertion (set by `splith`/`splitv`)
+    pub(crate) pending_split: Option<rway_tiling::Layout>,
+
     // Configuration
     pub(crate) config: rway_config::Config,
 
@@ -203,6 +206,7 @@ impl RwayState {
             animations,
 
             cursor_status: CursorImageStatus::default_named(),
+            pending_split: None,
 
             loop_handle,
 
@@ -587,8 +591,8 @@ impl RwayState {
         display: Display<RwayState>,
         event_loop: &mut EventLoop<Self>,
     ) -> OsString {
-        let listening_socket = ListeningSocketSource::new_auto()
-            .expect("Failed to create Wayland listening socket");
+        let listening_socket =
+            ListeningSocketSource::new_auto().expect("Failed to create Wayland listening socket");
         let socket_name = listening_socket.socket_name().to_os_string();
 
         let loop_handle = event_loop.handle();
