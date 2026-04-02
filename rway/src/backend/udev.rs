@@ -63,7 +63,8 @@ use smithay::{
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::border::{window_borders, BorderConfig};
+use crate::border::BorderConfig;
+use crate::render::{self, RwayRenderer};
 use crate::state::RwayState;
 
 // 支持的颜色格式：优先 10-bit，退而求其次 8-bit
@@ -86,7 +87,16 @@ type UdevRenderer<'a> = MultiRenderer<
 smithay::backend::renderer::element::render_elements! {
     pub UdevRenderElement<='a, UdevRenderer<'a>>;
     Space=smithay::desktop::space::SpaceRenderElements<UdevRenderer<'a>, smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement<UdevRenderer<'a>>>,
-    Cursor=smithay::backend::renderer::element::solid::SolidColorRenderElement,
+    Overlay=smithay::backend::renderer::element::solid::SolidColorRenderElement,
+}
+
+impl RwayRenderer for UdevRenderer<'_> {
+    fn gles_renderer(&self) -> &GlesRenderer {
+        self.as_ref()
+    }
+    fn gles_renderer_mut(&mut self) -> &mut GlesRenderer {
+        self.as_mut()
+    }
 }
 
 /// 用于将 Output 与 DRM 设备/CRTC 关联的标识
@@ -1118,6 +1128,11 @@ fn render_surface(
         );
     });
 
+    // Shared pipeline: generate overlay elements BEFORE borrowing udev_data
+    let border_config = BorderConfig::from_config(&state.config);
+    let scale = Scale::from(1.0_f64);
+    let overlays = render::overlay_elements(state, scale, &border_config);
+
     // 获取渲染器并执行渲染
     let udev = state.udev_data.as_mut().expect("udev backend initialized");
     let primary_gpu = udev.primary_gpu;
@@ -1144,7 +1159,7 @@ fn render_surface(
         }
     };
 
-    // 使用 Space 的渲染元素来组合帧
+    // Space elements (window surfaces)
     let space_elements = smithay::desktop::space::space_render_elements::<
         _,
         smithay::desktop::Window,
@@ -1152,54 +1167,16 @@ fn render_surface(
     >(&mut renderer, [&state.space], &output, 1.0)
     .unwrap_or_default();
 
-    // Build border config from user settings
-    let border_config = BorderConfig::from_config(&state.config);
-    let bw = border_config.width;
-    let scale = Scale::from(1.0_f64);
-    let focused_surface = state.seat.get_keyboard().and_then(|kb| kb.current_focus());
-
-    let mut elements: Vec<UdevRenderElement<'_>> = Vec::with_capacity(space_elements.len() + 1);
-
-    // Cursor element (DRM compositor auto-assigns to hardware cursor plane)
-    if !matches!(
-        state.cursor_status,
-        smithay::input::pointer::CursorImageStatus::Hidden
-    ) {
-        if let Some(pointer) = state.seat.get_pointer() {
-            let pos = pointer.current_location();
-            let cursor_el = crate::cursor::cursor_square_element(pos, scale);
-            elements.push(UdevRenderElement::Cursor(cursor_el));
-        }
-    }
-
-    // Border elements: expand content rect back to container rect, draw inside
-    for window in state.space.elements() {
-        let is_focused = focused_surface
-            .as_ref()
-            .is_some_and(|fs| window.toplevel().is_some_and(|tl| tl.wl_surface() == fs));
-        let color = if is_focused {
-            border_config.focused_color
-        } else {
-            border_config.unfocused_color
-        };
-        if let Some(content_geo) = state.space.element_geometry(window) {
-            let container_geo = smithay::utils::Rectangle::new(
-                (content_geo.loc.x - bw, content_geo.loc.y - bw).into(),
-                (content_geo.size.w + 2 * bw, content_geo.size.h + 2 * bw).into(),
-            );
-            for border_el in window_borders(container_geo, color, bw, scale) {
-                elements.push(UdevRenderElement::Cursor(border_el));
-            }
-        }
-    }
-
+    // Compose: overlays (cursor + borders) first, then space surfaces
+    let mut elements: Vec<UdevRenderElement<'_>> =
+        Vec::with_capacity(space_elements.len() + overlays.len());
+    elements.extend(overlays.into_iter().map(UdevRenderElement::Overlay));
     elements.extend(space_elements.into_iter().map(UdevRenderElement::Space));
 
-    // 渲染帧并提交（光标元素自动走 DRM cursor plane）
     let result = surface.drm_output.render_frame(
         &mut renderer,
         &elements,
-        [0.1f32, 0.1, 0.1, 1.0],
+        render::CLEAR_COLOR,
         FrameFlags::empty(),
     );
 
