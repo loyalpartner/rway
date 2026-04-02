@@ -11,15 +11,15 @@ use smithay::{
     utils::{Logical, Physical, Point, Rectangle, Scale, Size},
 };
 
-/// 边框样式配置
+/// Border style configuration
 #[derive(Debug, Clone)]
-pub struct BorderConfig {
-    /// 边框宽度（逻辑像素）
-    pub width: i32,
-    /// 聚焦窗口边框颜色 [R, G, B, A]
-    pub focused_color: [f32; 4],
-    /// 非聚焦窗口边框颜色 [R, G, B, A]
-    pub unfocused_color: [f32; 4],
+pub(crate) struct BorderConfig {
+    /// Border width (logical pixels)
+    pub(crate) width: i32,
+    /// Focused window border color [R, G, B, A]
+    pub(crate) focused_color: [f32; 4],
+    /// Unfocused window border color [R, G, B, A]
+    pub(crate) unfocused_color: [f32; 4],
 }
 
 impl Default for BorderConfig {
@@ -45,7 +45,7 @@ impl Default for BorderConfig {
 /// # 返回值
 /// 包含 4 个 `SolidColorRenderElement` 的向量（顺序：上、下、左、右）。
 /// 若 `border_width <= 0`，则返回空向量。
-pub fn window_borders(
+pub(crate) fn window_borders(
     window_geo: Rectangle<i32, Logical>,
     color: [f32; 4],
     border_width: i32,

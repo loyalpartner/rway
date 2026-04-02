@@ -95,9 +95,9 @@ struct UdevOutputId {
     crtc: crtc::Handle,
 }
 
-/// Udev 后端的数据结构
-pub struct UdevData {
-    pub session: LibSeatSession,
+/// Udev backend data structure
+pub(crate) struct UdevData {
+    pub(crate) session: LibSeatSession,
     _dh: DisplayHandle,
     dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     primary_gpu: DrmNode,
@@ -173,10 +173,10 @@ impl DmabufHandler for RwayState {
         &mut self
             .udev_data
             .as_mut()
-            .expect("udev_data 未初始化")
+            .expect("udev backend initialized")
             .dmabuf_state
             .as_mut()
-            .unwrap()
+            .expect("udev init: dmabuf state not initialized")
             .0
     }
 
@@ -186,7 +186,7 @@ impl DmabufHandler for RwayState {
         dmabuf: Dmabuf,
         notifier: ImportNotifier,
     ) {
-        let udev = self.udev_data.as_mut().expect("udev_data 未初始化");
+        let udev = self.udev_data.as_mut().expect("udev backend initialized");
         if udev
             .gpus
             .single_renderer(&udev.primary_gpu)
@@ -202,10 +202,11 @@ impl DmabufHandler for RwayState {
 }
 delegate_dmabuf!(RwayState);
 
-/// Udev 后端的入口函数
-pub fn run_udev() {
-    let mut event_loop: EventLoop<RwayState> = EventLoop::try_new().unwrap();
-    let display: Display<RwayState> = Display::new().unwrap();
+/// Udev backend entry point
+pub(crate) fn run_udev() {
+    let mut event_loop: EventLoop<RwayState> =
+        EventLoop::try_new().expect("Failed to create event loop");
+    let display: Display<RwayState> = Display::new().expect("Failed to create Wayland display");
     let display_handle = display.handle();
 
     // ── 1. 初始化 libseat 会话 ──
@@ -225,7 +226,7 @@ pub fn run_udev() {
         DrmNode::from_path(var).expect("无效的 DRM 设备路径")
     } else {
         primary_gpu(&seat_name)
-            .unwrap()
+            .expect("udev init: failed to query primary GPU")
             .and_then(|x| {
                 DrmNode::from_path(x)
                     .ok()?
@@ -234,10 +235,10 @@ pub fn run_udev() {
             })
             .unwrap_or_else(|| {
                 all_gpus(&seat_name)
-                    .unwrap()
+                    .expect("udev init: failed to enumerate GPUs")
                     .into_iter()
                     .find_map(|x| DrmNode::from_path(x).ok())
-                    .expect("未找到 GPU!")
+                    .expect("udev init: no GPU found!")
             })
     };
     info!("使用 {} 作为主 GPU", primary_gpu);
@@ -248,7 +249,7 @@ pub fn run_udev() {
         let capabilities = unsafe { GlesRenderer::supported_capabilities(&context)? };
         Ok(unsafe { GlesRenderer::with_capabilities(context, capabilities)? })
     }))
-    .unwrap();
+    .expect("udev init: failed to create GpuManager");
 
     // ── 4. 创建 UdevData ──
     let udev_data = UdevData {
@@ -278,9 +279,11 @@ pub fn run_udev() {
 
     // ── 7. 初始化 libinput ──
     let mut libinput_context = Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(
-        state.udev_data.as_ref().unwrap().session.clone().into(),
+        state.udev_data.as_ref().expect("udev backend initialized").session.clone().into(),
     );
-    libinput_context.udev_assign_seat(&seat_name).unwrap();
+    libinput_context
+        .udev_assign_seat(&seat_name)
+        .expect("udev init: failed to assign seat to libinput");
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
 
     // 注册 libinput 事件源
@@ -297,7 +300,7 @@ pub fn run_udev() {
                         state
                             .udev_data
                             .as_mut()
-                            .unwrap()
+                            .expect("udev backend initialized")
                             .keyboards
                             .push(device.clone());
                     }
@@ -306,7 +309,7 @@ pub fn run_udev() {
                         state
                             .udev_data
                             .as_mut()
-                            .unwrap()
+                            .expect("udev backend initialized")
                             .keyboards
                             .retain(|item| item != device);
                     }
@@ -315,7 +318,7 @@ pub fn run_udev() {
                 state.process_input_event(event);
             },
         )
-        .unwrap();
+        .expect("udev init: failed to register libinput event source");
 
     // ── 8. 注册会话通知（VT 切换） ──
     handle
@@ -325,7 +328,7 @@ pub fn run_udev() {
                     libinput_context.suspend();
                     info!("会话已暂停");
 
-                    let udev = state.udev_data.as_mut().unwrap();
+                    let udev = state.udev_data.as_mut().expect("udev backend initialized");
                     for backend in udev.backends.values_mut() {
                         backend.drm_output_manager.pause();
                     }
@@ -336,7 +339,7 @@ pub fn run_udev() {
                     if let Err(err) = libinput_context.resume() {
                         error!("恢复 libinput 上下文失败: {:?}", err);
                     }
-                    let udev = state.udev_data.as_mut().unwrap();
+                    let udev = state.udev_data.as_mut().expect("udev backend initialized");
                     for (_node, backend) in udev.backends.iter_mut() {
                         if let Err(err) = backend.drm_output_manager.device_mut().activate(false) {
                             error!("激活 DRM 后端失败: {:?}", err);
@@ -347,7 +350,7 @@ pub fn run_udev() {
                     let nodes: Vec<DrmNode> = state
                         .udev_data
                         .as_ref()
-                        .unwrap()
+                        .expect("udev backend initialized")
                         .backends
                         .keys()
                         .copied()
@@ -358,7 +361,7 @@ pub fn run_udev() {
                 }
             }
         })
-        .unwrap();
+        .expect("udev init: failed to register session notifier");
 
     // ── 9. 扫描设备：优先初始化主 GPU ──
     let primary_node = primary_gpu
@@ -394,19 +397,22 @@ pub fn run_udev() {
 
     // 更新 SHM 格式
     {
-        let udev = state.udev_data.as_mut().unwrap();
+        let udev = state.udev_data.as_mut().expect("udev backend initialized");
         let shm_formats = udev
             .gpus
             .single_renderer(&primary_gpu)
-            .unwrap()
+            .expect("udev init: failed to get renderer for SHM formats")
             .shm_formats();
         state.shm_state.update_formats(shm_formats);
     }
 
     // ── 10. 初始化 EGL 硬件加速 ──
     {
-        let udev = state.udev_data.as_mut().unwrap();
-        let mut renderer = udev.gpus.single_renderer(&primary_gpu).unwrap();
+        let udev = state.udev_data.as_mut().expect("udev backend initialized");
+        let mut renderer = udev
+            .gpus
+            .single_renderer(&primary_gpu)
+            .expect("udev init: failed to get renderer for EGL");
         info!("尝试初始化 EGL 硬件加速");
         match renderer.bind_wl_display(&display_handle) {
             Ok(_) => info!("EGL 硬件加速已启用"),
@@ -416,12 +422,15 @@ pub fn run_udev() {
 
     // ── 11. 初始化 DMA-BUF 支持 ──
     {
-        let udev = state.udev_data.as_mut().unwrap();
-        let renderer = udev.gpus.single_renderer(&primary_gpu).unwrap();
+        let udev = state.udev_data.as_mut().expect("udev backend initialized");
+        let renderer = udev
+            .gpus
+            .single_renderer(&primary_gpu)
+            .expect("udev init: failed to get renderer for DMA-BUF");
         let dmabuf_formats = renderer.dmabuf_formats();
         let default_feedback = DmabufFeedbackBuilder::new(primary_gpu.dev_id(), dmabuf_formats)
             .build()
-            .unwrap();
+            .expect("udev init: failed to build DMA-BUF feedback");
         let mut dmabuf_state = DmabufState::new();
         let global = dmabuf_state
             .create_global_with_default_feedback::<RwayState>(&display_handle, &default_feedback);
@@ -454,7 +463,7 @@ pub fn run_udev() {
                 }
             },
         )
-        .unwrap();
+        .expect("udev init: failed to register udev hotplug event source");
 
     // 注册 IPC 轮询
     crate::ipc::register_ipc_source(&event_loop.handle());
@@ -481,7 +490,7 @@ pub fn run_udev() {
             state.cleanup_dead_windows();
             let _ = state.display_handle.flush_clients();
         })
-        .unwrap();
+        .expect("udev: event loop terminated with error");
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -495,7 +504,7 @@ fn device_added(
     node: DrmNode,
     path: &Path,
 ) -> Result<(), DeviceAddError> {
-    let udev = state.udev_data.as_mut().unwrap();
+    let udev = state.udev_data.as_mut().expect("udev backend initialized");
 
     // 通过 libseat 打开设备文件
     let fd = udev
@@ -524,7 +533,7 @@ fn device_added(
                 }
             },
         )
-        .unwrap();
+        .expect("udev init: failed to register DRM VBlank event source");
 
     // 尝试初始化 GPU（获取 EGL 渲染节点）
     let render_node = {
@@ -622,7 +631,7 @@ fn device_added(
 
 /// 设备连接器变更（热插拔）
 fn device_changed(state: &mut RwayState, node: DrmNode) {
-    let udev = state.udev_data.as_mut().unwrap();
+    let udev = state.udev_data.as_mut().expect("udev backend initialized");
     let device = match udev.backends.get_mut(&node) {
         Some(d) => d,
         None => return,
@@ -662,7 +671,7 @@ fn device_changed(state: &mut RwayState, node: DrmNode) {
 fn device_removed(state: &mut RwayState, node: DrmNode) {
     // 先收集所有需要断开的连接器，避免借用冲突
     let crtcs: Vec<_> = {
-        let udev = state.udev_data.as_mut().unwrap();
+        let udev = state.udev_data.as_mut().expect("udev backend initialized");
         let device = match udev.backends.get_mut(&node) {
             Some(d) => d,
             None => return,
@@ -681,7 +690,7 @@ fn device_removed(state: &mut RwayState, node: DrmNode) {
 
     debug!("所有表面已释放");
 
-    let udev = state.udev_data.as_mut().unwrap();
+    let udev = state.udev_data.as_mut().expect("udev backend initialized");
     if let Some(backend_data) = udev.backends.remove(&node) {
         if let Some(render_node) = backend_data.render_node {
             udev.gpus.as_mut().remove_node(&render_node);
@@ -698,7 +707,7 @@ fn connector_connected(
     connector: connector::Info,
     crtc: crtc::Handle,
 ) {
-    let udev = state.udev_data.as_mut().unwrap();
+    let udev = state.udev_data.as_mut().expect("udev backend initialized");
     let device = match udev.backends.get_mut(&node) {
         Some(d) => d,
         None => return,
@@ -750,7 +759,7 @@ fn connector_connected(
 
     // 计算输出位置（水平排列）
     let x = state.space.outputs().fold(0, |acc, o| {
-        acc + state.space.output_geometry(o).unwrap().size.w
+        acc + state.space.output_geometry(o).map(|g| g.size.w).unwrap_or(0)
     });
     let position = (x, 0).into();
 
@@ -822,7 +831,7 @@ fn connector_disconnected(
     _connector: connector::Info,
     crtc: crtc::Handle,
 ) {
-    let udev = state.udev_data.as_mut().unwrap();
+    let udev = state.udev_data.as_mut().expect("udev backend initialized");
     let device = match udev.backends.get_mut(&node) {
         Some(d) => d,
         None => return,
@@ -844,7 +853,7 @@ fn render_all_surfaces(state: &mut RwayState, node: DrmNode) {
     let crtcs: Vec<crtc::Handle> = state
         .udev_data
         .as_ref()
-        .unwrap()
+        .expect("udev backend initialized")
         .backends
         .get(&node)
         .map(|b| b.surfaces.keys().copied().collect())
@@ -865,7 +874,7 @@ fn frame_finish(
     crtc: crtc::Handle,
     metadata: &mut Option<DrmEventMetadata>,
 ) {
-    let udev = state.udev_data.as_mut().unwrap();
+    let udev = state.udev_data.as_mut().expect("udev backend initialized");
     let device = match udev.backends.get_mut(&dev_id) {
         Some(b) => b,
         None => {
@@ -1055,7 +1064,7 @@ fn render_surface(
 ) {
     // 查找对应的 Wayland 输出
     let output = {
-        let udev = state.udev_data.as_ref().unwrap();
+        let udev = state.udev_data.as_ref().expect("udev backend initialized");
         let device = match udev.backends.get(&node) {
             Some(d) => d,
             None => {
@@ -1099,7 +1108,7 @@ fn render_surface(
     });
 
     // 获取渲染器并执行渲染
-    let udev = state.udev_data.as_mut().unwrap();
+    let udev = state.udev_data.as_mut().expect("udev backend initialized");
     let primary_gpu = udev.primary_gpu;
     let device = match udev.backends.get_mut(&node) {
         Some(d) => d,

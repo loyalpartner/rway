@@ -1,5 +1,5 @@
-pub mod move_grab;
-pub use move_grab::MoveSurfaceGrab;
+pub(crate) mod move_grab;
+pub(crate) use move_grab::MoveSurfaceGrab;
 
-pub mod resize_grab;
-pub use resize_grab::ResizeSurfaceGrab;
+pub(crate) mod resize_grab;
+pub(crate) use resize_grab::ResizeSurfaceGrab;

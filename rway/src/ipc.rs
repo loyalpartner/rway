@@ -14,8 +14,8 @@ use rway_ipc::{
 
 use crate::state::RwayState;
 
-/// 将 IPC 服务器注册到 calloop 事件循环
-pub fn register_ipc_source(handle: &LoopHandle<'static, RwayState>) {
+/// Register the IPC server with the calloop event loop
+pub(crate) fn register_ipc_source(handle: &LoopHandle<'static, RwayState>) {
     // 使用定时器轮询 IPC 连接（简单可靠的方式）
     // 每 50ms 检查一次新连接
     handle

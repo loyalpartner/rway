@@ -8,8 +8,8 @@ use smithay::wayland::seat::WaylandFocus;
 
 use crate::state::RwayState;
 
-/// 检查当前按键是否匹配某个快捷键绑定
-pub fn find_matching_binding<'a>(
+/// Check if the current key press matches a keybinding
+pub(crate) fn find_matching_binding<'a>(
     keybindings: &'a [Keybinding],
     modifiers: &ModifiersState,
     keysym: u32,
@@ -26,8 +26,8 @@ pub fn find_matching_binding<'a>(
     None
 }
 
-/// 执行快捷键动作
-pub fn execute_action(state: &mut RwayState, action: &Action) {
+/// Execute a keybinding action
+pub(crate) fn execute_action(state: &mut RwayState, action: &Action) {
     match action {
         Action::Exec(cmd) => {
             tracing::info!("exec: {}", cmd);
@@ -241,9 +241,9 @@ fn modifiers_match(required: &[Modifier], current: &ModifiersState) -> bool {
         && current.ctrl == expected_ctrl
 }
 
-/// 将 xkb keysym 转换为 sway 配置中的按键名称
+/// Convert xkb keysym to sway config key name
 #[allow(non_upper_case_globals)]
-pub fn keysym_to_name(keysym: u32) -> Option<String> {
+pub(crate) fn keysym_to_name(keysym: u32) -> Option<String> {
     use smithay::input::keyboard::keysyms::*;
     let name = match keysym {
         KEY_Return => "Return",

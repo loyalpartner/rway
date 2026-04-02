@@ -1,6 +1,6 @@
 // input/mod.rs — 输入事件处理（键盘、指针、触摸）
 
-pub mod keybindings;
+pub(crate) mod keybindings;
 
 use smithay::{
     backend::input::{
@@ -30,7 +30,8 @@ impl RwayState {
                 // 克隆 keybindings 引用以避免借用冲突
                 let bindings = self.config.keybindings.clone();
 
-                self.seat.get_keyboard().unwrap().input::<(), _>(
+                let Some(keyboard) = self.seat.get_keyboard() else { return };
+                keyboard.input::<(), _>(
                     self,
                     event.key_code(),
                     event.state(),
@@ -68,7 +69,7 @@ impl RwayState {
             }
 
             InputEvent::PointerMotion { event, .. } => {
-                let pointer = self.seat.get_pointer().unwrap();
+                let Some(pointer) = self.seat.get_pointer() else { return };
                 let current = pointer.current_location();
 
                 // 相对移动：累加到当前位置，并 clamp 到输出范围
@@ -102,14 +103,14 @@ impl RwayState {
             }
 
             InputEvent::PointerMotionAbsolute { event, .. } => {
-                let output = self.space.outputs().next().unwrap();
-                let output_geo = self.space.output_geometry(output).unwrap();
+                let Some(output) = self.space.outputs().next() else { return };
+                let Some(output_geo) = self.space.output_geometry(output) else { return };
 
                 // 将绝对坐标变换到逻辑坐标系
                 let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
 
                 let serial = SERIAL_COUNTER.next_serial();
-                let pointer = self.seat.get_pointer().unwrap();
+                let Some(pointer) = self.seat.get_pointer() else { return };
                 let under = self.surface_under(pos);
 
                 pointer.motion(
@@ -125,8 +126,8 @@ impl RwayState {
             }
 
             InputEvent::PointerButton { event, .. } => {
-                let pointer = self.seat.get_pointer().unwrap();
-                let keyboard = self.seat.get_keyboard().unwrap();
+                let Some(pointer) = self.seat.get_pointer() else { return };
+                let Some(keyboard) = self.seat.get_keyboard() else { return };
 
                 let serial = SERIAL_COUNTER.next_serial();
                 let button = event.button_code();
@@ -211,7 +212,7 @@ impl RwayState {
                     }
                 }
 
-                let pointer = self.seat.get_pointer().unwrap();
+                let Some(pointer) = self.seat.get_pointer() else { return };
                 pointer.axis(self, frame);
                 pointer.frame(self);
             }

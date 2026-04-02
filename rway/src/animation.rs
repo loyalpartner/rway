@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-/// 动画配置
-pub struct AnimationConfig {
+/// Animation configuration
+pub(crate) struct AnimationConfig {
     /// 动画持续时间（默认 200ms）
     pub duration: Duration,
     /// 是否启用动画
@@ -64,8 +64,8 @@ impl WindowAnimation {
     }
 }
 
-/// 动画管理器：跟踪所有窗口的动画状态
-pub struct AnimationManager {
+/// Animation manager: tracks animation state for all windows
+pub(crate) struct AnimationManager {
     config: AnimationConfig,
     /// 活跃的动画（window_id -> 动画状态）
     animations: HashMap<u64, WindowAnimation>,
@@ -176,7 +176,8 @@ impl AnimationManager {
         self.current_positions.remove(&window_id);
     }
 
-    /// 是否有活跃的动画正在播放
+    /// Whether there are active animations playing
+    #[cfg(test)]
     pub fn has_active_animations(&self) -> bool {
         !self.animations.is_empty()
     }

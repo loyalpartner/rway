@@ -82,13 +82,13 @@ impl XdgShellHandler for RwayState {
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
-        let seat = Seat::from_resource(&seat).unwrap();
+        let Some(seat) = Seat::from_resource(&seat) else { return };
         let wl_surface = surface.wl_surface();
 
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
-            let pointer = seat.get_pointer().unwrap();
+            let Some(pointer) = seat.get_pointer() else { return };
 
-            let window = self
+            let Some(window) = self
                 .space
                 .elements()
                 .find(|w| {
@@ -96,9 +96,11 @@ impl XdgShellHandler for RwayState {
                         .map(|t| t.wl_surface() == wl_surface)
                         .unwrap_or(false)
                 })
-                .unwrap()
-                .clone();
-            let initial_window_location = self.space.element_location(&window).unwrap();
+                .cloned()
+            else {
+                return;
+            };
+            let Some(initial_window_location) = self.space.element_location(&window) else { return };
 
             let grab = MoveSurfaceGrab {
                 start_data,
@@ -117,13 +119,13 @@ impl XdgShellHandler for RwayState {
         serial: Serial,
         edges: xdg_toplevel::ResizeEdge,
     ) {
-        let seat = Seat::from_resource(&seat).unwrap();
+        let Some(seat) = Seat::from_resource(&seat) else { return };
         let wl_surface = surface.wl_surface();
 
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
-            let pointer = seat.get_pointer().unwrap();
+            let Some(pointer) = seat.get_pointer() else { return };
 
-            let window = self
+            let Some(window) = self
                 .space
                 .elements()
                 .find(|w| {
@@ -131,9 +133,11 @@ impl XdgShellHandler for RwayState {
                         .map(|t| t.wl_surface() == wl_surface)
                         .unwrap_or(false)
                 })
-                .unwrap()
-                .clone();
-            let initial_window_location = self.space.element_location(&window).unwrap();
+                .cloned()
+            else {
+                return;
+            };
+            let Some(initial_window_location) = self.space.element_location(&window) else { return };
             let initial_window_size = window.geometry().size;
 
             surface.with_pending_state(|state| {
@@ -141,12 +145,14 @@ impl XdgShellHandler for RwayState {
             });
             surface.send_pending_configure();
 
-            let grab = ResizeSurfaceGrab::start(
+            let Some(grab) = ResizeSurfaceGrab::start(
                 start_data,
                 window,
                 edges.into(),
                 Rectangle::new(initial_window_location, initial_window_size),
-            );
+            ) else {
+                return;
+            };
 
             pointer.set_grab(self, grab, serial, Focus::Clear);
         }
@@ -183,8 +189,8 @@ fn check_grab(
     Some(start_data)
 }
 
-/// 在 `WlSurface::commit` 时调用：处理初始配置和弹窗提交
-pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: &WlSurface) {
+/// Called on `WlSurface::commit`: handle initial configure and popup commits
+pub(crate) fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: &WlSurface) {
     // 处理顶层窗口的初始 configure
     if let Some(window) = space
         .elements()
@@ -199,9 +205,9 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
             states
                 .data_map
                 .get::<XdgToplevelSurfaceData>()
-                .unwrap()
+                .expect("XdgToplevelSurfaceData missing")
                 .lock()
-                .unwrap()
+                .expect("XdgToplevelSurfaceData poisoned")
                 .initial_configure_sent
         });
 
@@ -240,9 +246,9 @@ impl RwayState {
             return;
         };
 
-        let output = self.space.outputs().next().unwrap();
-        let output_geo = self.space.output_geometry(output).unwrap();
-        let window_geo = self.space.element_geometry(window).unwrap();
+        let Some(output) = self.space.outputs().next() else { return };
+        let Some(output_geo) = self.space.output_geometry(output) else { return };
+        let Some(window_geo) = self.space.element_geometry(window) else { return };
 
         // 目标几何是相对于父窗口的
         let mut target = output_geo;

@@ -15,10 +15,10 @@ use smithay::{
     utils::{Logical, Point},
 };
 
-pub struct MoveSurfaceGrab {
-    pub start_data: PointerGrabStartData<RwayState>,
-    pub window: Window,
-    pub initial_window_location: Point<i32, Logical>,
+pub(crate) struct MoveSurfaceGrab {
+    pub(crate) start_data: PointerGrabStartData<RwayState>,
+    pub(crate) window: Window,
+    pub(crate) initial_window_location: Point<i32, Logical>,
 }
 
 impl PointerGrab<RwayState> for MoveSurfaceGrab {

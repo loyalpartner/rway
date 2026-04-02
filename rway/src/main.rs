@@ -107,10 +107,11 @@ fn init_logging() {
     }
 }
 
-/// 根据 `-c <命令>` 参数启动初始客户端
+/// Launch initial client based on `-c <command>` argument.
 ///
-/// 不指定 `-c` 时不自动启动任何程序，由配置文件的 `exec` 指令决定。
-pub fn spawn_client() {
+/// If `-c` is not specified, no program is launched automatically;
+/// startup programs are determined by `exec` directives in the config file.
+fn spawn_client() {
     let mut args = std::env::args().skip(1);
     let flag = args.next();
     let arg = args.next();

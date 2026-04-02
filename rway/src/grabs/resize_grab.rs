@@ -40,11 +40,11 @@ bitflags::bitflags! {
 impl From<xdg_toplevel::ResizeEdge> for ResizeEdge {
     #[inline]
     fn from(x: xdg_toplevel::ResizeEdge) -> Self {
-        Self::from_bits(x as u32).unwrap()
+        Self::from_bits(x as u32).unwrap_or(Self::empty())
     }
 }
 
-pub struct ResizeSurfaceGrab {
+pub(crate) struct ResizeSurfaceGrab {
     start_data: PointerGrabStartData<RwayState>,
     window: Window,
 
@@ -55,28 +55,29 @@ pub struct ResizeSurfaceGrab {
 }
 
 impl ResizeSurfaceGrab {
-    pub fn start(
+    pub(crate) fn start(
         start_data: PointerGrabStartData<RwayState>,
         window: Window,
         edges: ResizeEdge,
         initial_window_rect: Rectangle<i32, Logical>,
-    ) -> Self {
+    ) -> Option<Self> {
         let initial_rect = initial_window_rect;
 
-        ResizeSurfaceState::with(window.toplevel().unwrap().wl_surface(), |state| {
+        let toplevel = window.toplevel()?;
+        ResizeSurfaceState::with(toplevel.wl_surface(), |state| {
             *state = ResizeSurfaceState::Resizing {
                 edges,
                 initial_rect,
             };
         });
 
-        Self {
+        Some(Self {
             start_data,
             window,
             edges,
             initial_rect,
             last_window_size: initial_rect.size,
-        }
+        })
     }
 }
 
@@ -110,8 +111,9 @@ impl PointerGrab<RwayState> for ResizeSurfaceGrab {
             new_window_height = (self.initial_rect.size.h as f64 + delta.y) as i32;
         }
 
+        let Some(toplevel) = self.window.toplevel() else { return };
         let (min_size, max_size) =
-            compositor::with_states(self.window.toplevel().unwrap().wl_surface(), |states| {
+            compositor::with_states(toplevel.wl_surface(), |states| {
                 let mut guard = states.cached_state.get::<SurfaceCachedState>();
                 let data = guard.current();
                 (data.min_size, data.max_size)
@@ -135,12 +137,11 @@ impl PointerGrab<RwayState> for ResizeSurfaceGrab {
             new_window_height.max(min_height).min(max_height),
         ));
 
-        let xdg = self.window.toplevel().unwrap();
-        xdg.with_pending_state(|state| {
+        toplevel.with_pending_state(|state| {
             state.states.set(xdg_toplevel::State::Resizing);
             state.size = Some(self.last_window_size);
         });
-        xdg.send_pending_configure();
+        toplevel.send_pending_configure();
     }
 
     fn relative_motion(
@@ -166,19 +167,20 @@ impl PointerGrab<RwayState> for ResizeSurfaceGrab {
         if !handle.current_pressed().contains(&BTN_LEFT) {
             handle.unset_grab(self, data, event.serial, event.time, true);
 
-            let xdg = self.window.toplevel().unwrap();
-            xdg.with_pending_state(|state| {
-                state.states.unset(xdg_toplevel::State::Resizing);
-                state.size = Some(self.last_window_size);
-            });
-            xdg.send_pending_configure();
+            if let Some(xdg) = self.window.toplevel() {
+                xdg.with_pending_state(|state| {
+                    state.states.unset(xdg_toplevel::State::Resizing);
+                    state.size = Some(self.last_window_size);
+                });
+                xdg.send_pending_configure();
 
-            ResizeSurfaceState::with(xdg.wl_surface(), |state| {
-                *state = ResizeSurfaceState::WaitingForLastCommit {
-                    edges: self.edges,
-                    initial_rect: self.initial_rect,
-                };
-            });
+                ResizeSurfaceState::with(xdg.wl_surface(), |state| {
+                    *state = ResizeSurfaceState::WaitingForLastCommit {
+                        edges: self.edges,
+                        initial_rect: self.initial_rect,
+                    };
+                });
+            }
         }
     }
 
@@ -298,7 +300,7 @@ impl ResizeSurfaceState {
     {
         compositor::with_states(surface, |states| {
             states.data_map.insert_if_missing(RefCell::<Self>::default);
-            let state = states.data_map.get::<RefCell<Self>>().unwrap();
+            let state = states.data_map.get::<RefCell<Self>>().expect("just inserted");
             cb(&mut state.borrow_mut())
         })
     }
@@ -321,8 +323,8 @@ impl ResizeSurfaceState {
     }
 }
 
-/// 在 `WlSurface::commit` 时调用：处理调整大小后的窗口位置修正
-pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<()> {
+/// Called on `WlSurface::commit`: handle window position correction after resize
+pub(crate) fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<()> {
     let window = space
         .elements()
         .find(|w| {

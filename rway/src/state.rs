@@ -43,57 +43,61 @@ use crate::animation::{AnimationConfig, AnimationManager};
 
 /// rway 合成器的主状态结构体
 pub struct RwayState {
-    pub start_time: std::time::Instant,
-    pub socket_name: OsString,
-    pub display_handle: DisplayHandle,
+    pub(crate) start_time: std::time::Instant,
+    pub(crate) socket_name: OsString,
+    pub(crate) display_handle: DisplayHandle,
 
-    pub space: Space<Window>,
-    pub loop_signal: LoopSignal,
+    pub(crate) space: Space<Window>,
+    pub(crate) loop_signal: LoopSignal,
 
-    // Smithay 协议状态
-    pub compositor_state: CompositorState,
-    pub xdg_shell_state: XdgShellState,
-    pub shm_state: ShmState,
-    pub output_manager_state: OutputManagerState,
-    pub seat_state: SeatState<RwayState>,
-    pub data_device_state: DataDeviceState,
-    pub layer_shell_state: WlrLayerShellState,
-    pub xdg_decoration_state: XdgDecorationState,
-    pub popups: PopupManager,
-    pub seat: Seat<Self>,
+    // Smithay protocol state
+    pub(crate) compositor_state: CompositorState,
+    pub(crate) xdg_shell_state: XdgShellState,
+    pub(crate) shm_state: ShmState,
+    // Kept alive for protocol side effects; not read directly.
+    #[allow(dead_code)]
+    pub(crate) output_manager_state: OutputManagerState,
+    pub(crate) seat_state: SeatState<RwayState>,
+    pub(crate) data_device_state: DataDeviceState,
+    pub(crate) layer_shell_state: WlrLayerShellState,
+    // Kept alive for protocol side effects; not read directly.
+    #[allow(dead_code)]
+    pub(crate) xdg_decoration_state: XdgDecorationState,
+    pub(crate) popups: PopupManager,
+    pub(crate) seat: Seat<Self>,
 
-    // 平铺引擎
-    pub tiling: Tree,
-    pub window_map: HashMap<u64, Window>,
-    pub next_window_id: u64,
-    pub output_node: Option<NodeId>,
+    // Tiling engine
+    pub(crate) tiling: Tree,
+    pub(crate) window_map: HashMap<u64, Window>,
+    pub(crate) next_window_id: u64,
+    pub(crate) output_node: Option<NodeId>,
 
-    // 动画管理器
-    pub animations: AnimationManager,
+    // Animation manager
+    pub(crate) animations: AnimationManager,
 
-    // 光标状态（由客户端通过 SeatHandler::cursor_image 回调更新）
-    pub cursor_status: CursorImageStatus,
+    // Cursor state (updated by client via SeatHandler::cursor_image callback)
+    pub(crate) cursor_status: CursorImageStatus,
 
-    // 配置
-    pub config: rway_config::Config,
+    // Configuration
+    pub(crate) config: rway_config::Config,
 
-    // 事件循环句柄（用于调度空闲回调和定时器）
-    pub loop_handle: LoopHandle<'static, RwayState>,
+    // Event loop handle (for scheduling idle callbacks and timers)
+    pub(crate) loop_handle: LoopHandle<'static, RwayState>,
 
     // IPC
-    pub ipc_server: Option<rway_ipc::IpcServer>,
+    pub(crate) ipc_server: Option<rway_ipc::IpcServer>,
 
-    // XWayland 支持（仅在 xwayland feature 启用时使用）
+    // XWayland support (only used when xwayland feature is enabled)
     #[cfg(feature = "xwayland")]
-    pub xwayland_shell_state: Option<XWaylandShellState>,
+    pub(crate) xwayland_shell_state: Option<XWaylandShellState>,
     #[cfg(feature = "xwayland")]
-    pub xwm: Option<X11Wm>,
+    pub(crate) xwm: Option<X11Wm>,
     #[cfg(feature = "xwayland")]
-    pub xdisplay: Option<u32>,
+    pub(crate) xdisplay: Option<u32>,
 
-    // Udev 后端数据（仅在 udev feature 启用时使用）
+    // Udev backend data (only used when udev feature is enabled)
     #[cfg(feature = "udev")]
-    pub udev_data: Option<crate::backend::udev::UdevData>,
+    pub(crate) udev_data: Option<crate::backend::udev::UdevData>,
 }
 
 impl RwayState {
@@ -140,7 +144,9 @@ impl RwayState {
             variant: "dvorak",
             ..Default::default()
         };
-        seat.add_keyboard(xkb_config, 200, 25).unwrap();
+        if let Err(e) = seat.add_keyboard(xkb_config, 200, 25) {
+            tracing::error!("Failed to add keyboard to seat: {}", e);
+        }
         seat.add_pointer();
 
         // 二维平面空间，窗口和输出都映射在上面
@@ -571,17 +577,20 @@ impl RwayState {
         display: Display<RwayState>,
         event_loop: &mut EventLoop<Self>,
     ) -> OsString {
-        let listening_socket = ListeningSocketSource::new_auto().unwrap();
+        let listening_socket = ListeningSocketSource::new_auto()
+            .expect("Failed to create Wayland listening socket");
         let socket_name = listening_socket.socket_name().to_os_string();
 
         let loop_handle = event_loop.handle();
 
         loop_handle
             .insert_source(listening_socket, move |client_stream, _, state| {
-                state
+                if let Err(e) = state
                     .display_handle
                     .insert_client(client_stream, Arc::new(ClientState::default()))
-                    .unwrap();
+                {
+                    tracing::warn!("Failed to insert Wayland client: {}", e);
+                }
             })
             .expect("初始化 Wayland 事件源失败");
 
@@ -590,12 +599,14 @@ impl RwayState {
                 Generic::new(display, Interest::READ, Mode::Level),
                 |_, display, state| {
                     unsafe {
-                        display.get_mut().dispatch_clients(state).unwrap();
+                        if let Err(e) = display.get_mut().dispatch_clients(state) {
+                            tracing::warn!("Failed to dispatch Wayland clients: {}", e);
+                        }
                     }
                     Ok(PostAction::Continue)
                 },
             )
-            .unwrap();
+            .expect("Failed to register Wayland display event source");
 
         socket_name
     }

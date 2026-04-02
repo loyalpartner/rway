@@ -38,7 +38,9 @@ impl WlrLayerShellHandler for RwayState {
         // 将 layer surface 映射到输出的 layer map
         let mut layer_map = layer_map_for_output(&output);
         let layer_surface = LayerSurface::new(surface, namespace);
-        layer_map.map_layer(&layer_surface).unwrap();
+        if let Err(e) = layer_map.map_layer(&layer_surface) {
+            tracing::warn!("Failed to map layer surface: {}", e);
+        }
         drop(layer_map);
 
         // 重新布局（exclusive zone 可能变化）

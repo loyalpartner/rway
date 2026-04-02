@@ -19,8 +19,8 @@ use crate::{
     state::RwayState,
 };
 
-/// 初始化 Winit 后端：创建窗口、输出、损坏跟踪器，并注册到事件循环
-pub fn init_winit(
+/// Initialize the Winit backend: create window, output, damage tracker, and register with event loop
+pub(crate) fn init_winit(
     event_loop: &mut EventLoop<RwayState>,
     state: &mut RwayState,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -141,9 +141,12 @@ pub fn init_winit(
                             }
                         }
 
-                        // 绑定帧缓冲区并渲染（边框作为 custom_elements 最先绘制，光标在最后 = z-order 最高）
-                        let (renderer, mut framebuffer) = backend.bind().unwrap();
-                        smithay::desktop::space::render_output::<
+                        // Bind framebuffer and render (borders as custom_elements drawn first, cursor last = highest z-order)
+                        let Ok((renderer, mut framebuffer)) = backend.bind() else {
+                            tracing::warn!("Failed to bind winit backend framebuffer");
+                            return;
+                        };
+                        if let Err(e) = smithay::desktop::space::render_output::<
                             _,
                             smithay::backend::renderer::element::solid::SolidColorRenderElement,
                             _,
@@ -157,13 +160,16 @@ pub fn init_winit(
                             [&state.space],
                             &custom_elements,
                             &mut damage_tracker,
-                            [0.1, 0.1, 0.1, 1.0], // 深灰色背景
-                        )
-                        .unwrap();
+                            [0.1, 0.1, 0.1, 1.0], // dark gray background
+                        ) {
+                            tracing::warn!("Failed to render output: {:?}", e);
+                        }
                     }
 
-                    // 提交帧到宿主窗口
-                    backend.submit(Some(&[damage])).unwrap();
+                    // Submit frame to host window
+                    if let Err(e) = backend.submit(Some(&[damage])) {
+                        tracing::warn!("Failed to submit winit frame: {:?}", e);
+                    }
 
                     // 通知所有窗口帧已完成
                     state.space.elements().for_each(|window| {
