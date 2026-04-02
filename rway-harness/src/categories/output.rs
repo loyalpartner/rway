@@ -308,9 +308,10 @@ fn test_output_refresh_rate() -> TestStatus {
     let input = "output eDP-1 resolution 1920x1080@60";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.outputs.iter().any(|o|
-                o.name == "eDP-1" && o.refresh_rate.is_some()
-            );
+            let found = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "eDP-1" && o.refresh_rate.is_some());
             if found {
                 TestStatus::Pass
             } else {
@@ -339,8 +340,14 @@ fn test_output_enable_disable() -> TestStatus {
     let input = "output eDP-1 enable\noutput HDMI-1 disable";
     match rway_config::parse(input) {
         Ok(config) => {
-            let edp_enable = config.outputs.iter().any(|o| o.name == "eDP-1" && o.enable == Some(true));
-            let hdmi_disable = config.outputs.iter().any(|o| o.name == "HDMI-1" && o.enable == Some(false));
+            let edp_enable = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "eDP-1" && o.enable == Some(true));
+            let hdmi_disable = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "HDMI-1" && o.enable == Some(false));
             if edp_enable && hdmi_disable {
                 TestStatus::Pass
             } else {
@@ -356,7 +363,10 @@ fn test_output_toggle() -> TestStatus {
     let input = "output eDP-1 disable";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.outputs.iter().any(|o| o.name == "eDP-1" && o.enable == Some(false));
+            let found = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "eDP-1" && o.enable == Some(false));
             if found {
                 TestStatus::Pass
             } else {
@@ -371,7 +381,10 @@ fn test_output_power() -> TestStatus {
     let input = "output eDP-1 power on";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.outputs.iter().any(|o| o.name == "eDP-1" && o.power == Some(true));
+            let found = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "eDP-1" && o.power == Some(true));
             if found {
                 TestStatus::Pass
             } else {
@@ -386,7 +399,10 @@ fn test_output_dpms() -> TestStatus {
     let input = "output eDP-1 dpms on";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.outputs.iter().any(|o| o.name == "eDP-1" && o.dpms == Some(true));
+            let found = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "eDP-1" && o.dpms == Some(true));
             if found {
                 TestStatus::Pass
             } else {
@@ -403,9 +419,9 @@ fn test_output_bg_image() -> TestStatus {
         Ok(config) => {
             let found = config.outputs.iter().any(|o| {
                 o.name == "eDP-1"
-                    && o.bg.as_ref().is_some_and(|bg| {
-                        bg.source == "/path/to/image.png" && bg.mode == "fill"
-                    })
+                    && o.bg
+                        .as_ref()
+                        .is_some_and(|bg| bg.source == "/path/to/image.png" && bg.mode == "fill")
             });
             if found {
                 TestStatus::Pass
@@ -423,9 +439,9 @@ fn test_output_bg_solid_color() -> TestStatus {
         Ok(config) => {
             let found = config.outputs.iter().any(|o| {
                 o.name == "*"
-                    && o.bg.as_ref().is_some_and(|bg| {
-                        bg.source == "#000000" && bg.mode == "solid_color"
-                    })
+                    && o.bg
+                        .as_ref()
+                        .is_some_and(|bg| bg.source == "#000000" && bg.mode == "solid_color")
             });
             if found {
                 TestStatus::Pass
@@ -441,9 +457,10 @@ fn test_output_scale_filter() -> TestStatus {
     let input = "output eDP-1 scale_filter linear";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.outputs.iter().any(|o| {
-                o.name == "eDP-1" && o.scale_filter.as_deref() == Some("linear")
-            });
+            let found = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "eDP-1" && o.scale_filter.as_deref() == Some("linear"));
             if found {
                 TestStatus::Pass
             } else {
@@ -458,9 +475,10 @@ fn test_output_adaptive_sync() -> TestStatus {
     let input = "output eDP-1 adaptive_sync on";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.outputs.iter().any(|o| {
-                o.name == "eDP-1" && o.adaptive_sync == Some(true)
-            });
+            let found = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "eDP-1" && o.adaptive_sync == Some(true));
             if found {
                 TestStatus::Pass
             } else {
@@ -475,9 +493,10 @@ fn test_output_subpixel() -> TestStatus {
     let input = "output eDP-1 subpixel rgb";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.outputs.iter().any(|o| {
-                o.name == "eDP-1" && o.subpixel.as_deref() == Some("rgb")
-            });
+            let found = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "eDP-1" && o.subpixel.as_deref() == Some("rgb"));
             if found {
                 TestStatus::Pass
             } else {
@@ -504,7 +523,12 @@ fn test_output_config_name_wildcard() -> TestStatus {
 }
 
 fn test_output_ipc_rect_fields() -> TestStatus {
-    let rect = rway_ipc::IpcRect { x: 10, y: 20, width: 1920, height: 1080 };
+    let rect = rway_ipc::IpcRect {
+        x: 10,
+        y: 20,
+        width: 1920,
+        height: 1080,
+    };
     let json = serde_json::to_value(&rect).unwrap();
     let required = ["x", "y", "width", "height"];
     for field in &required {
@@ -520,7 +544,11 @@ fn test_output_ipc_rect_fields() -> TestStatus {
 }
 
 fn test_output_ipc_mode_fields() -> TestStatus {
-    let mode = rway_ipc::IpcMode { width: 2560, height: 1440, refresh: 144000 };
+    let mode = rway_ipc::IpcMode {
+        width: 2560,
+        height: 1440,
+        refresh: 144000,
+    };
     let json = serde_json::to_value(&mode).unwrap();
     let required = ["width", "height", "refresh"];
     for field in &required {
@@ -539,9 +567,10 @@ fn test_output_max_render_time() -> TestStatus {
     let input = "output eDP-1 max_render_time 5";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.outputs.iter().any(|o| {
-                o.name == "eDP-1" && o.max_render_time == Some(5)
-            });
+            let found = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "eDP-1" && o.max_render_time == Some(5));
             if found {
                 TestStatus::Pass
             } else {
@@ -556,9 +585,10 @@ fn test_output_color_profile() -> TestStatus {
     let input = "output eDP-1 color_profile srgb";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.outputs.iter().any(|o| {
-                o.name == "eDP-1" && o.color_profile.as_deref() == Some("srgb")
-            });
+            let found = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "eDP-1" && o.color_profile.as_deref() == Some("srgb"));
             if found {
                 TestStatus::Pass
             } else {
@@ -573,9 +603,10 @@ fn test_output_allow_tearing() -> TestStatus {
     let input = "output eDP-1 allow_tearing yes";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.outputs.iter().any(|o| {
-                o.name == "eDP-1" && o.allow_tearing == Some(true)
-            });
+            let found = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "eDP-1" && o.allow_tearing == Some(true));
             if found {
                 TestStatus::Pass
             } else {
@@ -598,8 +629,17 @@ fn test_ipc_output_info() -> TestStatus {
         scale: 2.0,
         transform: "normal".into(),
         current_workspace: Some("1".into()),
-        rect: rway_ipc::IpcRect { x: 0, y: 0, width: 2560, height: 1600 },
-        current_mode: rway_ipc::IpcMode { width: 2560, height: 1600, refresh: 60000 },
+        rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 2560,
+            height: 1600,
+        },
+        current_mode: rway_ipc::IpcMode {
+            width: 2560,
+            height: 1600,
+            refresh: 60000,
+        },
     };
     let json = serde_json::to_value(&output).unwrap();
 

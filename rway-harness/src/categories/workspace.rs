@@ -272,8 +272,16 @@ fn test_switch_hides_others() -> TestStatus {
     rway_tiling::workspace::switch_workspace(&mut tree, "2");
 
     let list = rway_tiling::workspace::get_workspaces(&tree);
-    let ws1_visible = list.iter().find(|(_, n, _)| n == "1").map(|(_, _, v)| *v).unwrap_or(true);
-    let ws2_visible = list.iter().find(|(_, n, _)| n == "2").map(|(_, _, v)| *v).unwrap_or(false);
+    let ws1_visible = list
+        .iter()
+        .find(|(_, n, _)| n == "1")
+        .map(|(_, _, v)| *v)
+        .unwrap_or(true);
+    let ws2_visible = list
+        .iter()
+        .find(|(_, n, _)| n == "2")
+        .map(|(_, _, v)| *v)
+        .unwrap_or(false);
 
     if !ws1_visible && ws2_visible {
         TestStatus::Pass
@@ -344,7 +352,12 @@ fn test_workspace_focused_via_ipc() -> TestStatus {
         focused: true,
         urgent: false,
         output: "eDP-1".into(),
-        rect: rway_ipc::IpcRect { x: 0, y: 0, width: 1920, height: 1080 },
+        rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        },
     };
     let json = serde_json::to_value(&ws).unwrap();
     if json["focused"] == true {
@@ -404,9 +417,10 @@ fn test_workspace_assign() -> TestStatus {
     let input = r#"assign [app_id="firefox"] workspace 2"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.assigns.iter().any(|a| {
-                a.criteria.app_id.as_deref() == Some("firefox") && a.workspace == "2"
-            });
+            let found = config
+                .assigns
+                .iter()
+                .any(|a| a.criteria.app_id.as_deref() == Some("firefox") && a.workspace == "2");
             if found {
                 TestStatus::Pass
             } else {
@@ -513,9 +527,10 @@ fn test_workspace_output_config() -> TestStatus {
     let input = "workspace 5 output DP-1";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.workspaces.iter().any(|w| {
-                w.name == "5" && w.outputs.contains(&"DP-1".to_string())
-            });
+            let found = config
+                .workspaces
+                .iter()
+                .any(|w| w.name == "5" && w.outputs.contains(&"DP-1".to_string()));
             if found {
                 TestStatus::Pass
             } else {

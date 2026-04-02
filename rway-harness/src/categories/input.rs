@@ -332,11 +332,15 @@ fn test_input_xkb_layout() -> TestStatus {
     let input = r#"input "1:1:keyboard" xkb_layout us"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i|
-                i.settings.get("xkb_layout") == Some(&"us".to_string())
-            );
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("xkb_layout setting not found".into()) }
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("xkb_layout") == Some(&"us".to_string()));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("xkb_layout setting not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -346,11 +350,15 @@ fn test_input_xkb_options() -> TestStatus {
     let input = r#"input "1:1:keyboard" xkb_options caps:escape"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i|
-                i.settings.get("xkb_options") == Some(&"caps:escape".to_string())
-            );
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("xkb_options setting not found".into()) }
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("xkb_options") == Some(&"caps:escape".to_string()));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("xkb_options setting not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -360,11 +368,15 @@ fn test_input_xkb_variant() -> TestStatus {
     let input = r#"input "1:1:keyboard" xkb_variant intl"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i|
-                i.settings.get("xkb_variant") == Some(&"intl".to_string())
-            );
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("xkb_variant setting not found".into()) }
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("xkb_variant") == Some(&"intl".to_string()));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("xkb_variant setting not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -374,11 +386,15 @@ fn test_input_xkb_model() -> TestStatus {
     let input = r#"input "1:1:keyboard" xkb_model pc105"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i|
-                i.settings.get("xkb_model") == Some(&"pc105".to_string())
-            );
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("xkb_model setting not found".into()) }
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("xkb_model") == Some(&"pc105".to_string()));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("xkb_model setting not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -388,11 +404,15 @@ fn test_input_repeat_delay() -> TestStatus {
     let input = r#"input "1:1:keyboard" repeat_delay 300"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i|
-                i.settings.get("repeat_delay") == Some(&"300".to_string())
-            );
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("repeat_delay setting not found".into()) }
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("repeat_delay") == Some(&"300".to_string()));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("repeat_delay setting not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -402,11 +422,15 @@ fn test_input_repeat_rate() -> TestStatus {
     let input = r#"input "1:1:keyboard" repeat_rate 50"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i|
-                i.settings.get("repeat_rate") == Some(&"50".to_string())
-            );
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("repeat_rate setting not found".into()) }
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("repeat_rate") == Some(&"50".to_string()));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("repeat_rate setting not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -416,11 +440,15 @@ fn test_input_natural_scroll() -> TestStatus {
     let input = r#"input "1:1:touchpad" natural_scroll enabled"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i|
-                i.settings.get("natural_scroll") == Some(&"enabled".to_string())
-            );
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("natural_scroll setting not found".into()) }
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("natural_scroll") == Some(&"enabled".to_string()));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("natural_scroll setting not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -430,11 +458,15 @@ fn test_input_tap() -> TestStatus {
     let input = r#"input "1:1:touchpad" tap enabled"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i|
-                i.settings.get("tap") == Some(&"enabled".to_string())
-            );
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("tap setting not found".into()) }
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("tap") == Some(&"enabled".to_string()));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("tap setting not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -444,11 +476,15 @@ fn test_input_dwt() -> TestStatus {
     let input = r#"input "1:1:touchpad" dwt enabled"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i|
-                i.settings.get("dwt") == Some(&"enabled".to_string())
-            );
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("dwt setting not found".into()) }
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("dwt") == Some(&"enabled".to_string()));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("dwt setting not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -458,11 +494,15 @@ fn test_input_accel_profile() -> TestStatus {
     let input = r#"input "1:1:touchpad" accel_profile adaptive"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i|
-                i.settings.get("accel_profile") == Some(&"adaptive".to_string())
-            );
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("accel_profile setting not found".into()) }
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("accel_profile") == Some(&"adaptive".to_string()));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("accel_profile setting not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -472,11 +512,15 @@ fn test_input_pointer_accel() -> TestStatus {
     let input = r#"input "1:1:touchpad" pointer_accel 0.5"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i|
-                i.settings.get("pointer_accel") == Some(&"0.5".to_string())
-            );
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("pointer_accel setting not found".into()) }
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("pointer_accel") == Some(&"0.5".to_string()));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("pointer_accel setting not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -486,11 +530,15 @@ fn test_input_scroll_method() -> TestStatus {
     let input = r#"input "1:1:touchpad" scroll_method two_finger"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i|
-                i.settings.get("scroll_method") == Some(&"two_finger".to_string())
-            );
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("scroll_method setting not found".into()) }
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("scroll_method") == Some(&"two_finger".to_string()));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("scroll_method setting not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -538,9 +586,10 @@ fn test_bindsym_whole_window_flag() -> TestStatus {
     let input = "bindsym --whole-window button2 kill";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.keybindings.iter().any(|kb| {
-                kb.key == "button2" && kb.flags.whole_window
-            });
+            let found = config
+                .keybindings
+                .iter()
+                .any(|kb| kb.key == "button2" && kb.flags.whole_window);
             if found {
                 TestStatus::Pass
             } else {
@@ -569,9 +618,10 @@ fn test_mode_binding() -> TestStatus {
     let input = "mode \"resize\" {\n    bindsym Left resize shrink width 10 px\n}";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.modes.iter().any(|m| {
-                m.name == "resize" && !m.keybindings.is_empty()
-            });
+            let found = config
+                .modes
+                .iter()
+                .any(|m| m.name == "resize" && !m.keybindings.is_empty());
             if found {
                 TestStatus::Pass
             } else {
@@ -618,9 +668,10 @@ fn test_input_without_quotes() -> TestStatus {
     let input = "input type:keyboard xkb_layout de";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i| {
-                i.settings.get("xkb_layout") == Some(&"de".to_string())
-            });
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.settings.get("xkb_layout") == Some(&"de".to_string()));
             if found {
                 TestStatus::Pass
             } else {

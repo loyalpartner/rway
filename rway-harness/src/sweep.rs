@@ -85,7 +85,10 @@ pub fn run_sweep(fix: bool) {
 
     // 1. Parse spec
     let spec = parse_spec(&spec_path);
-    println!("{DIM}  Parsed {} spec entries from sway-spec.md{RESET}", spec.len());
+    println!(
+        "{DIM}  Parsed {} spec entries from sway-spec.md{RESET}",
+        spec.len()
+    );
 
     // 2. Run harness and collect results
     let mut harness = Harness::new();
@@ -96,10 +99,7 @@ pub fn run_sweep(fix: bool) {
         .iter()
         .flat_map(|(_, cr)| cr.details.iter())
         .collect();
-    println!(
-        "{DIM}  Ran {} harness tests{RESET}\n",
-        all_details.len()
-    );
+    println!("{DIM}  Ran {} harness tests{RESET}\n", all_details.len());
 
     // 3. Cross-reference
     let (consistent, needs_update, disagrees, unmatched) = cross_reference(&spec, &all_details);
@@ -360,8 +360,18 @@ fn extract_feature_name(cells: &[&str]) -> Option<String> {
 fn is_table_header(name: &str) -> bool {
     let lower = name.to_lowercase();
     let headers = [
-        "指令", "命令", "类型码", "条件属性", "标志", "事件码", "修饰键",
-        "名称", "行为", "类型", "---", "描述",
+        "指令",
+        "命令",
+        "类型码",
+        "条件属性",
+        "标志",
+        "事件码",
+        "修饰键",
+        "名称",
+        "行为",
+        "类型",
+        "---",
+        "描述",
     ];
     headers.iter().any(|h| lower.contains(h)) || lower.contains("---")
 }
@@ -467,10 +477,7 @@ fn cross_reference(
 
 fn test_matches_spec(test: &crate::TestDetail, spec_key: &str) -> bool {
     let test_name = test.name.to_lowercase();
-    let feature = test
-        .sway_feature
-        .to_lowercase()
-        .replace([' ', '-'], "_");
+    let feature = test.sway_feature.to_lowercase().replace([' ', '-'], "_");
 
     // Word-boundary containment
     if contains_word(&test_name, spec_key) || contains_word(&feature, spec_key) {
@@ -493,8 +500,7 @@ fn contains_word(haystack: &str, needle: &str) -> bool {
         let abs_pos = start + pos;
         let before_ok = abs_pos == 0 || haystack.as_bytes()[abs_pos - 1] == b'_';
         let end_pos = abs_pos + needle.len();
-        let after_ok =
-            end_pos >= haystack.len() || haystack.as_bytes()[end_pos] == b'_';
+        let after_ok = end_pos >= haystack.len() || haystack.as_bytes()[end_pos] == b'_';
         if before_ok && after_ok {
             return true;
         }
@@ -624,7 +630,10 @@ fn parse_clippy_summary_line(line: &str) -> Option<(String, usize)> {
 
     let gen_pos = line.find("generated ")?;
     let num_part = &line[gen_pos + "generated ".len()..];
-    let num_str: String = num_part.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let num_str: String = num_part
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     let count = num_str.parse::<usize>().ok()?;
 
     Some((crate_name, count))
@@ -726,7 +735,13 @@ fn find_pub_items(dir: &Path) -> Vec<(String, String)> {
 }
 
 fn extract_pub_name(line: &str) -> Option<String> {
-    for kw in &["pub fn ", "pub struct ", "pub enum ", "pub trait ", "pub type "] {
+    for kw in &[
+        "pub fn ",
+        "pub struct ",
+        "pub enum ",
+        "pub trait ",
+        "pub type ",
+    ] {
         if let Some(pos) = line.find(kw) {
             let rest = &line[pos + kw.len()..];
             let name: String = rest
@@ -829,7 +844,10 @@ mod tests {
     #[test]
     fn contains_word_matches() {
         assert!(contains_word("parse_set_variable", "set"));
-        assert!(contains_word("parse_floating_modifier", "floating_modifier"));
+        assert!(contains_word(
+            "parse_floating_modifier",
+            "floating_modifier"
+        ));
         assert!(contains_word("set", "set"));
         assert!(!contains_word("preset_value", "set")); // not at word boundary
     }
@@ -844,13 +862,24 @@ mod tests {
 
     #[test]
     fn extract_feature_from_backticks() {
-        let cells = vec!["`set`", "`set $<name> <value>`", "-", "`[IMPLEMENTED]`", "P0"];
+        let cells = vec![
+            "`set`",
+            "`set $<name> <value>`",
+            "-",
+            "`[IMPLEMENTED]`",
+            "P0",
+        ];
         assert_eq!(extract_feature_name(&cells), Some("set".to_string()));
     }
 
     #[test]
     fn extract_feature_with_qualifier() {
-        let cells = vec!["`focus` direction", "`focus up\\|right`", "`[IMPLEMENTED]`", "P0"];
+        let cells = vec![
+            "`focus` direction",
+            "`focus up\\|right`",
+            "`[IMPLEMENTED]`",
+            "P0",
+        ];
         assert_eq!(
             extract_feature_name(&cells),
             Some("focus direction".to_string())

@@ -236,7 +236,10 @@ fn test_default_border_pixel() -> TestStatus {
             if config.default_border == rway_config::BorderStyle::Pixel(3) {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("expected Pixel(3), got {:?}", config.default_border))
+                TestStatus::Fail(format!(
+                    "expected Pixel(3), got {:?}",
+                    config.default_border
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
@@ -250,7 +253,10 @@ fn test_default_border_normal() -> TestStatus {
             if config.default_border == rway_config::BorderStyle::Normal(2) {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("expected Normal(2), got {:?}", config.default_border))
+                TestStatus::Fail(format!(
+                    "expected Normal(2), got {:?}",
+                    config.default_border
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
@@ -297,7 +303,10 @@ fn test_gaps_visual() -> TestStatus {
     rway_tiling::commands::insert_window(&mut tree, 1);
 
     let root = tree.root();
-    let gaps = rway_tiling::GapsConfig { inner: 10, outer: 20 };
+    let gaps = rway_tiling::GapsConfig {
+        inner: 10,
+        outer: 20,
+    };
     rway_tiling::layout::compute_layout(&mut tree, root, screen, &gaps);
 
     let geoms = rway_tiling::layout::get_window_geometries(&tree);
@@ -321,7 +330,10 @@ fn test_gaps_inner_outer_combined() -> TestStatus {
     rway_tiling::workspace::add_workspace(&mut tree, out, "1");
     rway_tiling::commands::insert_window(&mut tree, 1);
     rway_tiling::commands::insert_window(&mut tree, 2);
-    let gaps = rway_tiling::GapsConfig { inner: 10, outer: 20 };
+    let gaps = rway_tiling::GapsConfig {
+        inner: 10,
+        outer: 20,
+    };
     let root = tree.root();
     rway_tiling::layout::compute_layout(&mut tree, root, screen, &gaps);
     let geoms = rway_tiling::layout::get_window_geometries(&tree);
@@ -548,7 +560,10 @@ fn test_default_border_zero_pixel() -> TestStatus {
             if config.default_border == rway_config::BorderStyle::Pixel(0) {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("expected Pixel(0), got {:?}", config.default_border))
+                TestStatus::Fail(format!(
+                    "expected Pixel(0), got {:?}",
+                    config.default_border
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),

@@ -211,7 +211,8 @@ impl Harness {
                 status: status.clone(),
             };
 
-            if let Some((_, cat_report)) = by_category.iter_mut().find(|(c, _)| *c == test.category) {
+            if let Some((_, cat_report)) = by_category.iter_mut().find(|(c, _)| *c == test.category)
+            {
                 match &detail.status {
                     TestStatus::Pass => cat_report.passed += 1,
                     TestStatus::Fail(_) => cat_report.failed += 1,

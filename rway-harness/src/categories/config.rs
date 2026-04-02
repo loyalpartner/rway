@@ -572,9 +572,10 @@ fn test_parse_workspace_output() -> TestStatus {
     let input = "workspace 1 output eDP-1";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.workspaces.iter().any(|w| {
-                w.name == "1" && w.outputs.contains(&"eDP-1".to_string())
-            });
+            let found = config
+                .workspaces
+                .iter()
+                .any(|w| w.name == "1" && w.outputs.contains(&"eDP-1".to_string()));
             if found {
                 TestStatus::Pass
             } else {
@@ -589,9 +590,10 @@ fn test_parse_input_block() -> TestStatus {
     let input = "input \"1:1:keyboard\" {\n    xkb_layout us\n}";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.inputs.iter().any(|i| {
-                i.identifier.contains("keyboard")
-            });
+            let found = config
+                .inputs
+                .iter()
+                .any(|i| i.identifier.contains("keyboard"));
             if found {
                 TestStatus::Pass
             } else {
@@ -652,9 +654,10 @@ fn test_parse_output_resolution() -> TestStatus {
     let input = "output eDP-1 resolution 1920x1080";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.outputs.iter().any(|o| {
-                o.name == "eDP-1" && o.resolution == Some((1920, 1080))
-            });
+            let found = config
+                .outputs
+                .iter()
+                .any(|o| o.name == "eDP-1" && o.resolution == Some((1920, 1080)));
             if found {
                 TestStatus::Pass
             } else {
@@ -686,7 +689,10 @@ fn test_parse_default_orientation() -> TestStatus {
             if config.default_orientation.as_deref() == Some("horizontal") {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("expected horizontal, got {:?}", config.default_orientation))
+                TestStatus::Fail(format!(
+                    "expected horizontal, got {:?}",
+                    config.default_orientation
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
@@ -700,7 +706,10 @@ fn test_parse_workspace_layout() -> TestStatus {
             if config.workspace_layout.as_deref() == Some("tabbed") {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("expected tabbed, got {:?}", config.workspace_layout))
+                TestStatus::Fail(format!(
+                    "expected tabbed, got {:?}",
+                    config.workspace_layout
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
@@ -728,7 +737,10 @@ fn test_parse_swaybg_command() -> TestStatus {
             if config.swaybg_command.as_deref() == Some("/usr/bin/swaybg") {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("expected /usr/bin/swaybg, got {:?}", config.swaybg_command))
+                TestStatus::Fail(format!(
+                    "expected /usr/bin/swaybg, got {:?}",
+                    config.swaybg_command
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
@@ -742,7 +754,10 @@ fn test_parse_swaynag_command() -> TestStatus {
             if config.swaynag_command.as_deref() == Some("/usr/bin/swaynag") {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("expected /usr/bin/swaynag, got {:?}", config.swaynag_command))
+                TestStatus::Fail(format!(
+                    "expected /usr/bin/swaynag, got {:?}",
+                    config.swaynag_command
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
@@ -756,7 +771,10 @@ fn test_parse_floating_modifier() -> TestStatus {
             if config.floating_modifier == Some(rway_config::Modifier::Mod4) {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("expected Some(Mod4), got {:?}", config.floating_modifier))
+                TestStatus::Fail(format!(
+                    "expected Some(Mod4), got {:?}",
+                    config.floating_modifier
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
@@ -770,7 +788,10 @@ fn test_parse_floating_max_size() -> TestStatus {
             if config.floating_maximum_size == Some((1920, 1080)) {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("expected (1920,1080), got {:?}", config.floating_maximum_size))
+                TestStatus::Fail(format!(
+                    "expected (1920,1080), got {:?}",
+                    config.floating_maximum_size
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
@@ -784,7 +805,10 @@ fn test_parse_floating_min_size() -> TestStatus {
             if config.floating_minimum_size == Some((75, 50)) {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("expected (75,50), got {:?}", config.floating_minimum_size))
+                TestStatus::Fail(format!(
+                    "expected (75,50), got {:?}",
+                    config.floating_minimum_size
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
@@ -799,7 +823,8 @@ fn test_parse_focus_follows_mouse_always() -> TestStatus {
                 TestStatus::Pass
             } else {
                 TestStatus::Fail(format!(
-                    "expected Always, got {:?}", config.focus_follows_mouse
+                    "expected Always, got {:?}",
+                    config.focus_follows_mouse
                 ))
             }
         }
@@ -814,7 +839,10 @@ fn test_parse_focus_on_window_activation() -> TestStatus {
             if config.focus_on_window_activation.as_deref() == Some("smart") {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("expected smart, got {:?}", config.focus_on_window_activation))
+                TestStatus::Fail(format!(
+                    "expected smart, got {:?}",
+                    config.focus_on_window_activation
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
@@ -856,7 +884,10 @@ fn test_parse_popup_during_fullscreen() -> TestStatus {
             if config.popup_during_fullscreen.as_deref() == Some("smart") {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("expected smart, got {:?}", config.popup_during_fullscreen))
+                TestStatus::Fail(format!(
+                    "expected smart, got {:?}",
+                    config.popup_during_fullscreen
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
@@ -923,9 +954,10 @@ fn test_parse_for_window_class() -> TestStatus {
     let input = r#"for_window [class="Firefox"] floating enable"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.window_rules.iter().any(|r| {
-                r.criteria.class.as_deref() == Some("Firefox")
-            });
+            let found = config
+                .window_rules
+                .iter()
+                .any(|r| r.criteria.class.as_deref() == Some("Firefox"));
             if found {
                 TestStatus::Pass
             } else {
@@ -940,9 +972,10 @@ fn test_parse_for_window_title() -> TestStatus {
     let input = r#"for_window [title="Calculator"] floating enable"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.window_rules.iter().any(|r| {
-                r.criteria.title.as_deref() == Some("Calculator")
-            });
+            let found = config
+                .window_rules
+                .iter()
+                .any(|r| r.criteria.title.as_deref() == Some("Calculator"));
             if found {
                 TestStatus::Pass
             } else {
@@ -957,9 +990,10 @@ fn test_parse_assign_workspace() -> TestStatus {
     let input = r#"assign [app_id="firefox"] workspace 2"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.assigns.iter().any(|a| {
-                a.criteria.app_id.as_deref() == Some("firefox") && a.workspace == "2"
-            });
+            let found = config
+                .assigns
+                .iter()
+                .any(|a| a.criteria.app_id.as_deref() == Some("firefox") && a.workspace == "2");
             if found {
                 TestStatus::Pass
             } else {
@@ -974,9 +1008,10 @@ fn test_parse_no_focus() -> TestStatus {
     let input = r#"no_focus [app_id="notifications"]"#;
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.no_focus_rules.iter().any(|c| {
-                c.app_id.as_deref() == Some("notifications")
-            });
+            let found = config
+                .no_focus_rules
+                .iter()
+                .any(|c| c.app_id.as_deref() == Some("notifications"));
             if found {
                 TestStatus::Pass
             } else {

@@ -509,7 +509,11 @@ fn test_move_to_output() -> TestStatus {
     let mut tree = rway_tiling::Tree::new();
     let screen = rway_tiling::Rect::new(0, 0, 1920, 1080);
     let out1 = rway_tiling::workspace::add_output(&mut tree, "eDP-1", screen);
-    let out2 = rway_tiling::workspace::add_output(&mut tree, "HDMI-1", rway_tiling::Rect::new(1920, 0, 1920, 1080));
+    let out2 = rway_tiling::workspace::add_output(
+        &mut tree,
+        "HDMI-1",
+        rway_tiling::Rect::new(1920, 0, 1920, 1080),
+    );
     rway_tiling::workspace::add_workspace(&mut tree, out1, "1");
     rway_tiling::workspace::add_workspace(&mut tree, out2, "2");
     rway_tiling::commands::insert_window(&mut tree, 1);
@@ -525,9 +529,15 @@ fn test_move_to_scratchpad() -> TestStatus {
     let input = "set $mod Mod4\nbindsym $mod+minus move to scratchpad";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.keybindings.iter().any(|kb| kb.action == rway_config::Action::MoveToScratchpad);
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("MoveToScratchpad action not found".into()) }
+            let found = config
+                .keybindings
+                .iter()
+                .any(|kb| kb.action == rway_config::Action::MoveToScratchpad);
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("MoveToScratchpad action not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -537,9 +547,15 @@ fn test_scratchpad_show() -> TestStatus {
     let input = "set $mod Mod4\nbindsym $mod+minus scratchpad show";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.keybindings.iter().any(|kb| kb.action == rway_config::Action::ScratchpadShow);
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("ScratchpadShow action not found".into()) }
+            let found = config
+                .keybindings
+                .iter()
+                .any(|kb| kb.action == rway_config::Action::ScratchpadShow);
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("ScratchpadShow action not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -612,9 +628,10 @@ fn test_resize_command() -> TestStatus {
     let input = "set $mod Mod4\nbindsym $mod+r resize grow width 10 px";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.keybindings.iter().any(|kb| {
-                matches!(&kb.action, rway_config::Action::Resize { grow: true, .. })
-            });
+            let found = config
+                .keybindings
+                .iter()
+                .any(|kb| matches!(&kb.action, rway_config::Action::Resize { grow: true, .. }));
             if found {
                 TestStatus::Pass
             } else {
@@ -630,10 +647,19 @@ fn test_resize_set() -> TestStatus {
     match rway_config::parse(input) {
         Ok(config) => {
             let found = config.keybindings.iter().any(|kb| {
-                matches!(&kb.action, rway_config::Action::ResizeSet { width: 800, height: 600 })
+                matches!(
+                    &kb.action,
+                    rway_config::Action::ResizeSet {
+                        width: 800,
+                        height: 600
+                    }
+                )
             });
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("ResizeSet action not found".into()) }
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("ResizeSet action not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -766,15 +792,18 @@ fn test_kill_command_action() -> TestStatus {
 }
 
 fn test_move_direction_actions() -> TestStatus {
-    let input = "set $mod Mod4\nbindsym $mod+Shift+Left move left\nbindsym $mod+Shift+Right move right";
+    let input =
+        "set $mod Mod4\nbindsym $mod+Shift+Left move left\nbindsym $mod+Shift+Right move right";
     match rway_config::parse(input) {
         Ok(config) => {
-            let has_left = config.keybindings.iter().any(|kb| {
-                kb.action == rway_config::Action::Move(rway_config::Direction::Left)
-            });
-            let has_right = config.keybindings.iter().any(|kb| {
-                kb.action == rway_config::Action::Move(rway_config::Direction::Right)
-            });
+            let has_left = config
+                .keybindings
+                .iter()
+                .any(|kb| kb.action == rway_config::Action::Move(rway_config::Direction::Left));
+            let has_right = config
+                .keybindings
+                .iter()
+                .any(|kb| kb.action == rway_config::Action::Move(rway_config::Direction::Right));
             if has_left && has_right {
                 TestStatus::Pass
             } else {
@@ -790,10 +819,16 @@ fn test_move_absolute_position() -> TestStatus {
     match rway_config::parse(input) {
         Ok(config) => {
             let found = config.keybindings.iter().any(|kb| {
-                matches!(&kb.action, rway_config::Action::MovePosition { x: 100, y: 200 })
+                matches!(
+                    &kb.action,
+                    rway_config::Action::MovePosition { x: 100, y: 200 }
+                )
             });
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("MovePosition action not found".into()) }
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("MovePosition action not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -803,9 +838,15 @@ fn test_move_center() -> TestStatus {
     let input = "set $mod Mod4\nbindsym $mod+c move position center";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.keybindings.iter().any(|kb| kb.action == rway_config::Action::MoveCenter);
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("MoveCenter action not found".into()) }
+            let found = config
+                .keybindings
+                .iter()
+                .any(|kb| kb.action == rway_config::Action::MoveCenter);
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("MoveCenter action not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }
@@ -815,11 +856,15 @@ fn test_nop_command() -> TestStatus {
     let input = "set $mod Mod4\nbindsym $mod+n nop comment here";
     match rway_config::parse(input) {
         Ok(config) => {
-            let found = config.keybindings.iter().any(|kb| {
-                matches!(&kb.action, rway_config::Action::Nop(_))
-            });
-            if found { TestStatus::Pass }
-            else { TestStatus::Fail("Nop action not found".into()) }
+            let found = config
+                .keybindings
+                .iter()
+                .any(|kb| matches!(&kb.action, rway_config::Action::Nop(_)));
+            if found {
+                TestStatus::Pass
+            } else {
+                TestStatus::Fail("Nop action not found".into())
+            }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),
     }

@@ -288,10 +288,7 @@ fn test_splith_two_windows() -> TestStatus {
     if w1.width + w2.width == 1920 && w1.height == 1080 && w2.height == 1080 {
         TestStatus::Pass
     } else {
-        TestStatus::Fail(format!(
-            "SplitH layout incorrect: w1={:?} w2={:?}",
-            w1, w2
-        ))
+        TestStatus::Fail(format!("SplitH layout incorrect: w1={:?} w2={:?}", w1, w2))
     }
 }
 
@@ -313,10 +310,7 @@ fn test_splitv_two_windows() -> TestStatus {
     if w1.height + w2.height == 1080 && w1.width == 1920 && w2.width == 1920 {
         TestStatus::Pass
     } else {
-        TestStatus::Fail(format!(
-            "SplitV layout incorrect: w1={:?} w2={:?}",
-            w1, w2
-        ))
+        TestStatus::Fail(format!("SplitV layout incorrect: w1={:?} w2={:?}", w1, w2))
     }
 }
 
@@ -329,7 +323,10 @@ fn test_insert_creates_container() -> TestStatus {
     if geoms.len() == 2 {
         TestStatus::Pass
     } else {
-        TestStatus::Fail(format!("expected 2 windows after container creation, got {}", geoms.len()))
+        TestStatus::Fail(format!(
+            "expected 2 windows after container creation, got {}",
+            geoms.len()
+        ))
     }
 }
 
@@ -340,7 +337,10 @@ fn test_gaps_inner() -> TestStatus {
 
     let root = tree.root();
     let screen = rway_tiling::Rect::new(0, 0, 1920, 1080);
-    let gaps = rway_tiling::GapsConfig { inner: 10, outer: 0 };
+    let gaps = rway_tiling::GapsConfig {
+        inner: 10,
+        outer: 0,
+    };
     rway_tiling::layout::compute_layout(&mut tree, root, screen, &gaps);
     let geoms = rway_tiling::layout::get_window_geometries(&tree);
 
@@ -366,7 +366,10 @@ fn test_gaps_outer() -> TestStatus {
 
     let root = tree.root();
     let screen = rway_tiling::Rect::new(0, 0, 1920, 1080);
-    let gaps = rway_tiling::GapsConfig { inner: 0, outer: 20 };
+    let gaps = rway_tiling::GapsConfig {
+        inner: 0,
+        outer: 20,
+    };
     rway_tiling::layout::compute_layout(&mut tree, root, screen, &gaps);
     let geoms = rway_tiling::layout::get_window_geometries(&tree);
 
@@ -637,7 +640,10 @@ fn test_resize_grow_shrink() -> TestStatus {
 
     // 增大宽度 10ppt
     let grew = rway_tiling::commands::resize_container(
-        &mut tree, node_id, rway_tiling::commands::ResizeAxis::Width, 10.0,
+        &mut tree,
+        node_id,
+        rway_tiling::commands::ResizeAxis::Width,
+        10.0,
     );
     if !grew {
         return TestStatus::Fail("resize grow returned false".into());
@@ -645,7 +651,10 @@ fn test_resize_grow_shrink() -> TestStatus {
 
     // 缩小宽度 10ppt
     let shrunk = rway_tiling::commands::resize_container(
-        &mut tree, node_id, rway_tiling::commands::ResizeAxis::Width, -10.0,
+        &mut tree,
+        node_id,
+        rway_tiling::commands::ResizeAxis::Width,
+        -10.0,
     );
     if !shrunk {
         return TestStatus::Fail("resize shrink returned false".into());
@@ -740,7 +749,9 @@ fn test_tree_node_count() -> TestStatus {
     if after > before {
         TestStatus::Pass
     } else {
-        TestStatus::Fail(format!("node_count did not increase: before={before} after={after}"))
+        TestStatus::Fail(format!(
+            "node_count did not increase: before={before} after={after}"
+        ))
     }
 }
 

@@ -346,7 +346,13 @@ fn test_version_info_fields() -> TestStatus {
     };
     let json = serde_json::to_value(&version).unwrap();
 
-    let required = ["major", "minor", "patch", "human_readable", "loaded_config_file_name"];
+    let required = [
+        "major",
+        "minor",
+        "patch",
+        "human_readable",
+        "loaded_config_file_name",
+    ];
     for field in &required {
         if json.get(field).is_none() {
             return TestStatus::Fail(format!("missing field: {field}"));
@@ -387,11 +393,18 @@ fn test_workspace_info_fields() -> TestStatus {
         focused: true,
         urgent: false,
         output: "eDP-1".into(),
-        rect: rway_ipc::IpcRect { x: 0, y: 0, width: 1920, height: 1080 },
+        rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        },
     };
     let json = serde_json::to_value(&ws).unwrap();
 
-    let required = ["id", "num", "name", "visible", "focused", "urgent", "output", "rect"];
+    let required = [
+        "id", "num", "name", "visible", "focused", "urgent", "output", "rect",
+    ];
     for field in &required {
         if json.get(field).is_none() {
             return TestStatus::Fail(format!("missing field: {field}"));
@@ -408,10 +421,30 @@ fn test_tree_node_type_rename() -> TestStatus {
         layout: "output".into(),
         focused: false,
         urgent: false,
-        rect: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
-        window_rect: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
-        deco_rect: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
-        geometry: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
+        rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
+        window_rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
+        deco_rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
+        geometry: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
         nodes: vec![],
         floating_nodes: vec![],
         focus: vec![],
@@ -435,10 +468,30 @@ fn test_tree_node_nested() -> TestStatus {
         layout: "none".into(),
         focused: true,
         urgent: false,
-        rect: rway_ipc::IpcRect { x: 0, y: 0, width: 960, height: 1080 },
-        window_rect: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
-        deco_rect: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
-        geometry: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
+        rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 960,
+            height: 1080,
+        },
+        window_rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
+        deco_rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
+        geometry: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
         nodes: vec![],
         floating_nodes: vec![],
         focus: vec![],
@@ -452,10 +505,30 @@ fn test_tree_node_nested() -> TestStatus {
         layout: "splith".into(),
         focused: true,
         urgent: false,
-        rect: rway_ipc::IpcRect { x: 0, y: 0, width: 1920, height: 1080 },
-        window_rect: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
-        deco_rect: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
-        geometry: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
+        rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        },
+        window_rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
+        deco_rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
+        geometry: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
         nodes: vec![child],
         floating_nodes: vec![],
         focus: vec![2],
@@ -499,14 +572,33 @@ fn test_output_info_fields() -> TestStatus {
         scale: 1.0,
         transform: "normal".into(),
         current_workspace: Some("1".into()),
-        rect: rway_ipc::IpcRect { x: 0, y: 0, width: 1920, height: 1080 },
-        current_mode: rway_ipc::IpcMode { width: 1920, height: 1080, refresh: 60000 },
+        rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        },
+        current_mode: rway_ipc::IpcMode {
+            width: 1920,
+            height: 1080,
+            refresh: 60000,
+        },
     };
     let json = serde_json::to_value(&output).unwrap();
 
     let required = [
-        "id", "name", "make", "model", "serial", "active", "primary",
-        "scale", "transform", "current_workspace", "rect", "current_mode",
+        "id",
+        "name",
+        "make",
+        "model",
+        "serial",
+        "active",
+        "primary",
+        "scale",
+        "transform",
+        "current_workspace",
+        "rect",
+        "current_mode",
     ];
     for field in &required {
         if json.get(field).is_none() {
@@ -541,10 +633,30 @@ fn test_tree_node_optional_skip() -> TestStatus {
         layout: "splith".into(),
         focused: false,
         urgent: false,
-        rect: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
-        window_rect: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
-        deco_rect: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
-        geometry: rway_ipc::IpcRect { x: 0, y: 0, width: 0, height: 0 },
+        rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
+        window_rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
+        deco_rect: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
+        geometry: rway_ipc::IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
         nodes: vec![],
         floating_nodes: vec![],
         focus: vec![],
@@ -570,7 +682,9 @@ fn test_subscribe_event_types() -> TestStatus {
             if has_workspace && has_window {
                 TestStatus::Pass
             } else {
-                TestStatus::Fail(format!("missing event types: ws={has_workspace} win={has_window}"))
+                TestStatus::Fail(format!(
+                    "missing event types: ws={has_workspace} win={has_window}"
+                ))
             }
         }
         Err(e) => TestStatus::Fail(format!("parse error: {e}")),

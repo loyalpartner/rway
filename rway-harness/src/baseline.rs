@@ -38,8 +38,7 @@ pub fn load_baseline(path: &Path) -> Option<Baseline> {
 
 /// 保存基线到文件
 pub fn save_baseline(path: &Path, baseline: &Baseline) -> Result<(), std::io::Error> {
-    let json = serde_json::to_string_pretty(baseline)
-        .map_err(std::io::Error::other)?;
+    let json = serde_json::to_string_pretty(baseline).map_err(std::io::Error::other)?;
     std::fs::write(path, json)
 }
 

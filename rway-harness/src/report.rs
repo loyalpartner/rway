@@ -33,10 +33,7 @@ pub fn format_report(report: &CompatReport, out: &mut String) {
         "{BOLD}  {:<14} {:>6} {:>6} {:>6} {:>6} {:>7}{RESET}\n",
         "Category", "Pass", "Fail", "Skip", "N/A", "Rate"
     ));
-    out.push_str(&format!(
-        "  {}\n",
-        "-".repeat(50)
-    ));
+    out.push_str(&format!("  {}\n", "-".repeat(50)));
 
     // 各分类行
     for (category, cat_report) in &report.by_category {
@@ -70,10 +67,7 @@ pub fn format_report(report: &CompatReport, out: &mut String) {
         RED
     };
 
-    out.push_str(&format!(
-        "  {}\n",
-        "-".repeat(50)
-    ));
+    out.push_str(&format!("  {}\n", "-".repeat(50)));
     out.push_str(&format!(
         "  {BOLD}{:<14}{RESET} {GREEN}{:>6}{RESET} {RED}{:>6}{RESET} {YELLOW}{:>6}{RESET} {DIM}{:>6}{RESET} {total_color}{BOLD}{:>6.0}%{RESET}\n",
         "TOTAL",
@@ -102,9 +96,7 @@ pub fn format_report(report: &CompatReport, out: &mut String) {
         .collect();
 
     if !failures.is_empty() {
-        out.push_str(&format!(
-            "{BOLD}{RED}  Failed Tests:{RESET}\n"
-        ));
+        out.push_str(&format!("{BOLD}{RED}  Failed Tests:{RESET}\n"));
         for (cat, detail, reason) in &failures {
             out.push_str(&format!(
                 "    {RED}FAIL{RESET} [{cat}] {name} ({feature}): {reason}\n",
@@ -133,7 +125,7 @@ pub fn format_report(report: &CompatReport, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Category, CategoryReport, TestDetail, Priority};
+    use crate::{Category, CategoryReport, Priority, TestDetail};
 
     #[test]
     fn format_report_does_not_panic_on_empty() {
