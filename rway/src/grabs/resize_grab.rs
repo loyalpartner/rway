@@ -6,11 +6,10 @@ use crate::state::RwayState;
 use smithay::{
     desktop::{Space, Window},
     input::pointer::{
-        AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent,
-        GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
-        GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
-        GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab, PointerInnerHandle,
-        RelativeMotionEvent,
+        AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
+        GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
+        GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData,
+        MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
     },
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
@@ -65,7 +64,10 @@ impl ResizeSurfaceGrab {
         let initial_rect = initial_window_rect;
 
         ResizeSurfaceState::with(window.toplevel().unwrap().wl_surface(), |state| {
-            *state = ResizeSurfaceState::Resizing { edges, initial_rect };
+            *state = ResizeSurfaceState::Resizing {
+                edges,
+                initial_rect,
+            };
         });
 
         Self {
@@ -117,8 +119,16 @@ impl PointerGrab<RwayState> for ResizeSurfaceGrab {
 
         let min_width = min_size.w.max(1);
         let min_height = min_size.h.max(1);
-        let max_width = if max_size.w == 0 { i32::MAX } else { max_size.w };
-        let max_height = if max_size.h == 0 { i32::MAX } else { max_size.h };
+        let max_width = if max_size.w == 0 {
+            i32::MAX
+        } else {
+            max_size.w
+        };
+        let max_height = if max_size.h == 0 {
+            i32::MAX
+        } else {
+            max_size.h
+        };
 
         self.last_window_size = Size::from((
             new_window_width.max(min_width).min(max_width),
@@ -295,8 +305,14 @@ impl ResizeSurfaceState {
 
     fn commit(&mut self) -> Option<(ResizeEdge, Rectangle<i32, Logical>)> {
         match *self {
-            Self::Resizing { edges, initial_rect } => Some((edges, initial_rect)),
-            Self::WaitingForLastCommit { edges, initial_rect } => {
+            Self::Resizing {
+                edges,
+                initial_rect,
+            } => Some((edges, initial_rect)),
+            Self::WaitingForLastCommit {
+                edges,
+                initial_rect,
+            } => {
                 *self = Self::Idle;
                 Some((edges, initial_rect))
             }
@@ -309,7 +325,11 @@ impl ResizeSurfaceState {
 pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<()> {
     let window = space
         .elements()
-        .find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false))
+        .find(|w| {
+            w.toplevel()
+                .map(|t| t.wl_surface() == surface)
+                .unwrap_or(false)
+        })
         .cloned()?;
 
     let mut window_loc = space.element_location(&window)?;
@@ -464,7 +484,11 @@ mod tests {
     #[test]
     fn resize_max_size_zero_means_unlimited() {
         let max_size_w = 0_i32;
-        let effective_max = if max_size_w == 0 { i32::MAX } else { max_size_w };
+        let effective_max = if max_size_w == 0 {
+            i32::MAX
+        } else {
+            max_size_w
+        };
         assert_eq!(effective_max, i32::MAX);
     }
 
@@ -473,7 +497,8 @@ mod tests {
     /// 测试从左边缘调整大小时的 x 坐标修正
     #[test]
     fn resize_position_correction_left_edge() {
-        let initial_rect: Rectangle<i32, Logical> = Rectangle::new((100, 200).into(), (800, 600).into());
+        let initial_rect: Rectangle<i32, Logical> =
+            Rectangle::new((100, 200).into(), (800, 600).into());
         let new_geometry_size: Size<i32, Logical> = Size::from((850, 600));
 
         // x 新坐标 = 初始 x + (初始宽 - 新宽)
@@ -484,7 +509,8 @@ mod tests {
     /// 测试从顶边缘调整大小时的 y 坐标修正
     #[test]
     fn resize_position_correction_top_edge() {
-        let initial_rect: Rectangle<i32, Logical> = Rectangle::new((100, 200).into(), (800, 600).into());
+        let initial_rect: Rectangle<i32, Logical> =
+            Rectangle::new((100, 200).into(), (800, 600).into());
         let new_geometry_size: Size<i32, Logical> = Size::from((800, 650));
 
         // y 新坐标 = 初始 y + (初始高 - 新高)
@@ -509,7 +535,10 @@ mod tests {
 
         let edges = ResizeEdge::RIGHT;
         let rect: Rectangle<i32, Logical> = Rectangle::new((0, 0).into(), (400, 300).into());
-        let mut state = ResizeSurfaceState::Resizing { edges, initial_rect: rect };
+        let mut state = ResizeSurfaceState::Resizing {
+            edges,
+            initial_rect: rect,
+        };
 
         // Resizing 状态下 commit 返回数据且状态不变
         let result = state.commit();
@@ -528,7 +557,10 @@ mod tests {
 
         let edges = ResizeEdge::BOTTOM;
         let rect: Rectangle<i32, Logical> = Rectangle::new((0, 0).into(), (200, 150).into());
-        let mut state = ResizeSurfaceState::WaitingForLastCommit { edges, initial_rect: rect };
+        let mut state = ResizeSurfaceState::WaitingForLastCommit {
+            edges,
+            initial_rect: rect,
+        };
 
         let result = state.commit();
         assert!(result.is_some());

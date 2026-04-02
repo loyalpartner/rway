@@ -79,7 +79,10 @@ pub fn switch_workspace(tree: &mut Tree, workspace_name: &str) -> bool {
     let siblings: Vec<NodeId> = tree.children(output_id).to_vec();
     for ws_id in siblings {
         if let Some(node) = tree.get_mut(ws_id) {
-            if let NodeData::Workspace { ref mut is_visible, .. } = node.data {
+            if let NodeData::Workspace {
+                ref mut is_visible, ..
+            } = node.data
+            {
                 *is_visible = ws_id == target_id;
             }
         }
@@ -95,7 +98,10 @@ pub fn get_workspaces(tree: &Tree) -> Vec<(NodeId, String, bool)> {
     for &output_id in tree.children(root) {
         for &ws_id in tree.children(output_id) {
             if let Some(node) = tree.get(ws_id) {
-                if let NodeData::Workspace { name, is_visible, .. } = &node.data {
+                if let NodeData::Workspace {
+                    name, is_visible, ..
+                } = &node.data
+                {
                     result.push((ws_id, name.clone(), *is_visible));
                 }
             }
@@ -108,11 +114,7 @@ pub fn get_workspaces(tree: &Tree) -> Vec<(NodeId, String, bool)> {
 ///
 /// 实现方式：在每个额外的输出节点下创建同名工作区（如已存在则跳过）。
 /// 返回 `true` 表示至少有一个输出成功关联。
-pub fn span_workspace_outputs(
-    tree: &mut Tree,
-    workspace: NodeId,
-    outputs: &[NodeId],
-) -> bool {
+pub fn span_workspace_outputs(tree: &mut Tree, workspace: NodeId, outputs: &[NodeId]) -> bool {
     let ws_name = match tree.get(workspace) {
         Some(node) => match &node.data {
             NodeData::Workspace { name, .. } => name.clone(),
@@ -257,7 +259,10 @@ mod tests {
         let mut tree = Tree::new();
         let out = add_output(&mut tree, "eDP-1", screen());
         let ws = add_workspace(&mut tree, out, "1");
-        assert!(matches!(tree.get(ws).unwrap().data, NodeData::Workspace { .. }));
+        assert!(matches!(
+            tree.get(ws).unwrap().data,
+            NodeData::Workspace { .. }
+        ));
     }
 
     #[test]
@@ -265,7 +270,10 @@ mod tests {
         let mut tree = Tree::new();
         let out = add_output(&mut tree, "eDP-1", screen());
         let ws = add_workspace(&mut tree, out, "work");
-        if let NodeData::Workspace { name, is_visible, .. } = &tree.get(ws).unwrap().data {
+        if let NodeData::Workspace {
+            name, is_visible, ..
+        } = &tree.get(ws).unwrap().data
+        {
             assert_eq!(name, "work");
             assert!(*is_visible);
         } else {
@@ -318,7 +326,10 @@ mod tests {
 
         // 手动隐藏
         if let Some(node) = tree.get_mut(ws) {
-            if let NodeData::Workspace { ref mut is_visible, .. } = node.data {
+            if let NodeData::Workspace {
+                ref mut is_visible, ..
+            } = node.data
+            {
                 *is_visible = false;
             }
         }
@@ -337,7 +348,10 @@ mod tests {
 
         // 手动隐藏 ws2
         if let Some(n) = tree.get_mut(ws2) {
-            if let NodeData::Workspace { ref mut is_visible, .. } = n.data {
+            if let NodeData::Workspace {
+                ref mut is_visible, ..
+            } = n.data
+            {
                 *is_visible = false;
             }
         }

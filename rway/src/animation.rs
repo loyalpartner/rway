@@ -50,7 +50,12 @@ impl WindowAnimation {
         let y = self.start_y + (self.target_y - self.start_y) * t;
         let w = self.start_w + (self.target_w - self.start_w) * t;
         let h = self.start_h + (self.target_h - self.start_h) * t;
-        (x.round() as i32, y.round() as i32, w.round() as i32, h.round() as i32)
+        (
+            x.round() as i32,
+            y.round() as i32,
+            w.round() as i32,
+            h.round() as i32,
+        )
     }
 
     /// 动画是否已完成
@@ -97,9 +102,10 @@ impl AnimationManager {
         }
 
         // 新窗口（第一次出现）不做位置动画，直接到位
-        if !self.current_positions.contains_key(&window_id) {
-            self.current_positions
-                .insert(window_id, (target_x, target_y, target_w, target_h));
+        if let std::collections::hash_map::Entry::Vacant(e) =
+            self.current_positions.entry(window_id)
+        {
+            e.insert((target_x, target_y, target_w, target_h));
             return;
         }
 

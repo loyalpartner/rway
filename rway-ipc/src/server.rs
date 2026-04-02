@@ -84,7 +84,11 @@ mod tests {
 
     /// 生成测试用的临时 socket 路径
     fn temp_socket_path(suffix: &str) -> PathBuf {
-        PathBuf::from(format!("/tmp/rway-ipc-test-{}-{}.sock", std::process::id(), suffix))
+        PathBuf::from(format!(
+            "/tmp/rway-ipc-test-{}-{}.sock",
+            std::process::id(),
+            suffix
+        ))
     }
 
     // ── IpcServer::new ────────────────────────────────────────────────────────
@@ -143,10 +147,7 @@ mod tests {
 
         // 尝试连接到 socket
         let connect_result = UnixStream::connect(&path);
-        assert!(
-            connect_result.is_ok(),
-            "应该能够连接到 IPC socket"
-        );
+        assert!(connect_result.is_ok(), "应该能够连接到 IPC socket");
 
         drop(server);
     }

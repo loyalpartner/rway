@@ -3,8 +3,8 @@
 pub mod compositor;
 pub mod decoration;
 pub mod layer_shell;
-pub mod xdg_shell;
 pub mod output;
+pub mod xdg_shell;
 #[cfg(feature = "xwayland")]
 pub mod xwayland;
 

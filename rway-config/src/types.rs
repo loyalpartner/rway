@@ -95,15 +95,24 @@ pub enum Action {
     /// 透明度
     Opacity(OpacityAction),
     /// 精确设置大小
-    ResizeSet { width: i32, height: i32 },
+    ResizeSet {
+        width: i32,
+        height: i32,
+    },
     /// 移动到绝对位置
-    MovePosition { x: i32, y: i32 },
+    MovePosition {
+        x: i32,
+        y: i32,
+    },
     /// 移动到屏幕中央
     MoveCenter,
     /// 粘滞窗口
     Sticky(StickyAction),
     /// 标记窗口
-    Mark { name: String, add: bool },
+    Mark {
+        name: String,
+        add: bool,
+    },
     /// 取消标记
     Unmark(Option<String>),
     /// 移动到 scratchpad
@@ -239,7 +248,6 @@ pub struct GapsConfig {
     pub inner: u32,
     pub outer: u32,
 }
-
 
 // ────────────────────────────────────────────────────────────
 // 窗口规则
@@ -486,7 +494,6 @@ impl Default for Config {
     }
 }
 
-
 // ════════════════════════════════════════════════════════════
 // 单元测试（TDD：先于实现编写）
 // ════════════════════════════════════════════════════════════
@@ -543,7 +550,10 @@ mod tests {
         let _ = SplitDirection::Horizontal.clone();
         let _ = LayoutType::Tabbed.clone();
         let _ = BorderStyle::Pixel(2).clone();
-        let _ = ExecCommand { command: "foot".into() }.clone();
+        let _ = ExecCommand {
+            command: "foot".into(),
+        }
+        .clone();
     }
 
     #[test]
@@ -561,24 +571,54 @@ mod tests {
 
     #[test]
     fn gaps_config_equality() {
-        assert_eq!(GapsConfig { inner: 10, outer: 5 }, GapsConfig { inner: 10, outer: 5 });
-        assert_ne!(GapsConfig { inner: 10, outer: 5 }, GapsConfig { inner: 5, outer: 10 });
+        assert_eq!(
+            GapsConfig {
+                inner: 10,
+                outer: 5
+            },
+            GapsConfig {
+                inner: 10,
+                outer: 5
+            }
+        );
+        assert_ne!(
+            GapsConfig {
+                inner: 10,
+                outer: 5
+            },
+            GapsConfig {
+                inner: 5,
+                outer: 10
+            }
+        );
     }
 
     #[test]
     fn action_exec_eq() {
         assert_eq!(Action::Exec("foot".into()), Action::Exec("foot".into()));
-        assert_ne!(Action::Exec("foot".into()), Action::Exec("alacritty".into()));
+        assert_ne!(
+            Action::Exec("foot".into()),
+            Action::Exec("alacritty".into())
+        );
     }
 
     #[test]
     fn window_rule_action_variants() {
-        assert_eq!(WindowRuleAction::FloatingEnable, WindowRuleAction::FloatingEnable);
+        assert_eq!(
+            WindowRuleAction::FloatingEnable,
+            WindowRuleAction::FloatingEnable
+        );
         assert_eq!(
             WindowRuleAction::MoveToWorkspace("5".into()),
             WindowRuleAction::MoveToWorkspace("5".into())
         );
-        assert_eq!(WindowRuleAction::Resize(800, 600), WindowRuleAction::Resize(800, 600));
-        assert_ne!(WindowRuleAction::FloatingEnable, WindowRuleAction::FloatingDisable);
+        assert_eq!(
+            WindowRuleAction::Resize(800, 600),
+            WindowRuleAction::Resize(800, 600)
+        );
+        assert_ne!(
+            WindowRuleAction::FloatingEnable,
+            WindowRuleAction::FloatingDisable
+        );
     }
 }

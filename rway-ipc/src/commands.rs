@@ -117,7 +117,10 @@ mod tests {
 
         assert_eq!(json["success"], true);
         // error 字段为 None 时，skip_serializing_if 应该省略该字段
-        assert!(json.get("error").is_none(), "error 字段为 None 时不应序列化");
+        assert!(
+            json.get("error").is_none(),
+            "error 字段为 None 时不应序列化"
+        );
     }
 
     /// 测试失败命令结果的 JSON 序列化
@@ -384,10 +387,7 @@ mod tests {
 
         // 必须是 "type" 而不是 "node_type"
         assert!(json.get("type").is_some(), "字段应重命名为 'type'");
-        assert!(
-            json.get("node_type").is_none(),
-            "不应出现 'node_type' 字段"
-        );
+        assert!(json.get("node_type").is_none(), "不应出现 'node_type' 字段");
         assert_eq!(json["type"], "root");
     }
 
@@ -413,14 +413,8 @@ mod tests {
         };
         let json = to_value(&node).unwrap();
 
-        assert!(
-            json.get("app_id").is_none(),
-            "app_id 为 None 时不应序列化"
-        );
-        assert!(
-            json.get("window").is_none(),
-            "window 为 None 时不应序列化"
-        );
+        assert!(json.get("app_id").is_none(), "app_id 为 None 时不应序列化");
+        assert!(json.get("window").is_none(), "window 为 None 时不应序列化");
     }
 
     /// 测试 TreeNode 嵌套子节点序列化

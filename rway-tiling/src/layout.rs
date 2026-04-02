@@ -76,14 +76,14 @@ pub fn compute_layout(tree: &mut Tree, node_id: NodeId, available: Rect, gaps: &
 
         NodeData::Window { .. } => {
             // 叶节点：浮动窗口跳过布局计算，保留现有几何
-            let is_floating = matches!(
-                &node_data,
-                NodeData::Window { floating: true, .. }
-            );
+            let is_floating = matches!(&node_data, NodeData::Window { floating: true, .. });
             if !is_floating {
                 let final_rect = shrink_rect(available, gaps.inner / 2);
                 if let Some(node) = tree.get_mut(node_id) {
-                    if let NodeData::Window { ref mut geometry, .. } = node.data {
+                    if let NodeData::Window {
+                        ref mut geometry, ..
+                    } = node.data
+                    {
                         *geometry = final_rect;
                     }
                 }
@@ -634,7 +634,12 @@ mod tests {
         let win = add_window(&mut tree, ws, 1);
 
         // 传入 available 与 output.geometry 不同
-        compute_layout(&mut tree, root, Rect::new(0, 0, 9999, 9999), &GapsConfig::default());
+        compute_layout(
+            &mut tree,
+            root,
+            Rect::new(0, 0, 9999, 9999),
+            &GapsConfig::default(),
+        );
 
         let g = get_window_geometry(&tree, win);
         assert_eq!(g, Rect::new(100, 200, 800, 600));
@@ -650,7 +655,10 @@ mod tests {
         let ws = add_workspace(&mut tree, output);
         let win = add_window(&mut tree, ws, 1);
 
-        let gaps = GapsConfig { inner: 0, outer: 10 };
+        let gaps = GapsConfig {
+            inner: 0,
+            outer: 10,
+        };
         let root = tree.root();
         compute_layout(&mut tree, root, screen(), &gaps);
 
@@ -672,7 +680,10 @@ mod tests {
         let win1 = add_window(&mut tree, container, 1);
         let win2 = add_window(&mut tree, container, 2);
 
-        let gaps = GapsConfig { inner: 10, outer: 0 };
+        let gaps = GapsConfig {
+            inner: 10,
+            outer: 0,
+        };
         let root = tree.root();
         compute_layout(&mut tree, root, screen(), &gaps);
 
@@ -684,13 +695,22 @@ mod tests {
         // - 外侧边：win1 左缩 5，win2 右缩 5（各有 inner/2 的外侧空白）
         let inner = 10_i32;
         let gap_between = g2.x - (g1.x + g1.width);
-        assert_eq!(gap_between, inner, "两窗口之间应有 {}px 间距，实际为 {}", inner, gap_between);
+        assert_eq!(
+            gap_between, inner,
+            "两窗口之间应有 {}px 间距，实际为 {}",
+            inner, gap_between
+        );
 
         // 外侧空白各为 inner/2，两窗口宽度 + 内部间距 + 两侧外部空白 = 总宽度
         assert_eq!(g1.width + g2.width + gap_between + inner, 1920);
         // 验证外侧位置：win1 从 inner/2 开始，win2 在 总宽 - inner/2 结束
         assert_eq!(g1.x, inner / 2, "win1.x 应为 {}", inner / 2);
-        assert_eq!(g2.x + g2.width, 1920 - inner / 2, "win2 右边界应为 {}", 1920 - inner / 2);
+        assert_eq!(
+            g2.x + g2.width,
+            1920 - inner / 2,
+            "win2 右边界应为 {}",
+            1920 - inner / 2
+        );
     }
 
     /// 内边距为 8 时，垂直分割的三个窗口之间各有 8px 间距
@@ -730,7 +750,12 @@ mod tests {
         );
         // 验证外侧：第一个窗口从 inner/2 开始，最后一个窗口在 总高 - inner/2 结束
         assert_eq!(g1.y, inner / 2, "win1.y 应为 {}", inner / 2);
-        assert_eq!(g3.y + g3.height, 1080 - inner / 2, "win3 底边应为 {}", 1080 - inner / 2);
+        assert_eq!(
+            g3.y + g3.height,
+            1080 - inner / 2,
+            "win3 底边应为 {}",
+            1080 - inner / 2
+        );
     }
 
     /// GapsConfig::default()（0,0）应产生与旧版完全相同的几何结果
@@ -768,7 +793,10 @@ mod tests {
         let win1 = add_window(&mut tree, container, 1);
         let win2 = add_window(&mut tree, container, 2);
 
-        let gaps = GapsConfig { inner: 10, outer: 20 };
+        let gaps = GapsConfig {
+            inner: 10,
+            outer: 20,
+        };
         let root = tree.root();
         compute_layout(&mut tree, root, screen(), &gaps);
 
@@ -785,7 +813,11 @@ mod tests {
 
         // win2 右边 = 1920 - outer - inner/2 = 1920 - 20 - 5 = 1895
         let win2_right = g2.x + g2.width;
-        assert_eq!(win2_right, 1895, "win2 右边界应为 1895，实际为 {}", win2_right);
+        assert_eq!(
+            win2_right, 1895,
+            "win2 右边界应为 1895，实际为 {}",
+            win2_right
+        );
 
         // 两窗口之间间距 = inner = 10
         let gap = g2.x - (g1.x + g1.width);
@@ -803,7 +835,10 @@ mod tests {
         let ws = add_workspace(&mut tree, output);
         let win = add_window(&mut tree, ws, 1);
 
-        let gaps = GapsConfig { inner: 20, outer: 15 };
+        let gaps = GapsConfig {
+            inner: 20,
+            outer: 15,
+        };
         let root = tree.root();
         compute_layout(&mut tree, root, screen(), &gaps);
 
@@ -938,11 +973,18 @@ mod tests {
         let root = tree.root();
         compute_layout(&mut tree, root, screen(), &GapsConfig::default());
         let g_before = get_window_geometry(&tree, win);
-        assert_eq!(g_before, Rect::new(50, 50, 100, 100), "浮动状态下 geometry 不变");
+        assert_eq!(
+            g_before,
+            Rect::new(50, 50, 100, 100),
+            "浮动状态下 geometry 不变"
+        );
 
         // 手动切换为平铺
         if let Some(node) = tree.get_mut(win) {
-            if let NodeData::Window { ref mut floating, .. } = node.data {
+            if let NodeData::Window {
+                ref mut floating, ..
+            } = node.data
+            {
                 *floating = false;
             }
         }

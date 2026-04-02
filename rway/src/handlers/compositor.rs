@@ -46,15 +46,11 @@ impl CompositorHandler for RwayState {
             while let Some(parent) = get_parent(&root) {
                 root = parent;
             }
-            if let Some(window) = self
-                .space
-                .elements()
-                .find(|w| {
-                    w.toplevel()
-                        .map(|t| t.wl_surface() == &root)
-                        .unwrap_or(false)
-                })
-            {
+            if let Some(window) = self.space.elements().find(|w| {
+                w.toplevel()
+                    .map(|t| t.wl_surface() == &root)
+                    .unwrap_or(false)
+            }) {
                 window.on_commit();
             }
         }

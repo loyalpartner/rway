@@ -4,10 +4,7 @@ use std::time::Duration;
 
 use smithay::{
     backend::{
-        renderer::{
-            damage::OutputDamageTracker,
-            gles::GlesRenderer,
-        },
+        renderer::{damage::OutputDamageTracker, gles::GlesRenderer},
         winit::{self, WinitEvent},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
@@ -17,7 +14,10 @@ use smithay::{
 
 use smithay::input::pointer::CursorImageStatus;
 
-use crate::{border::{window_borders, BorderConfig}, state::RwayState};
+use crate::{
+    border::{window_borders, BorderConfig},
+    state::RwayState,
+};
 
 /// 初始化 Winit 后端：创建窗口、输出、损坏跟踪器，并注册到事件循环
 pub fn init_winit(
@@ -100,10 +100,8 @@ pub fn init_winit(
                         let scale = Scale::from(1.0_f64);
 
                         // 获取当前聚焦的键盘 surface，用于判断哪个窗口拥有焦点
-                        let focused_surface = state
-                            .seat
-                            .get_keyboard()
-                            .and_then(|kb| kb.current_focus());
+                        let focused_surface =
+                            state.seat.get_keyboard().and_then(|kb| kb.current_focus());
 
                         // 为每个已映射窗口生成边框渲染元素（位于 custom_elements 层，绘制在窗口下方）
                         // custom_elements 先于 space 元素渲染（z-order 最低），因此边框会被窗口内容遮盖。
@@ -113,10 +111,8 @@ pub fn init_winit(
                             .elements()
                             .flat_map(|window| {
                                 // 判断该窗口是否持有键盘焦点
-                                let is_focused = focused_surface.as_ref().map_or(false, |fs| {
-                                    window
-                                        .toplevel()
-                                        .map_or(false, |tl| tl.wl_surface() == fs)
+                                let is_focused = focused_surface.as_ref().is_some_and(|fs| {
+                                    window.toplevel().is_some_and(|tl| tl.wl_surface() == fs)
                                 });
 
                                 // 根据焦点状态选择边框颜色

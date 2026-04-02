@@ -27,7 +27,7 @@ impl Default for BorderConfig {
         Self {
             width: 2,
             focused_color: [0.3, 0.6, 0.9, 1.0],   // 蓝色（聚焦）
-            unfocused_color: [0.3, 0.3, 0.3, 1.0],  // 灰色（非聚焦）
+            unfocused_color: [0.3, 0.3, 0.3, 1.0], // 灰色（非聚焦）
         }
     }
 }

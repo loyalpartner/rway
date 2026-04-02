@@ -97,8 +97,7 @@ mod tests {
     /// 测试解析多个订阅类型
     #[test]
     fn test_parse_subscribe_multiple() {
-        let result =
-            parse_subscribe_payload(r#"["workspace", "window", "output"]"#).unwrap();
+        let result = parse_subscribe_payload(r#"["workspace", "window", "output"]"#).unwrap();
         assert_eq!(
             result,
             vec![
@@ -171,8 +170,7 @@ mod tests {
     /// 测试只有未知类型的情况（全部忽略后返回空列表）
     #[test]
     fn test_parse_subscribe_all_unknown_returns_empty() {
-        let result =
-            parse_subscribe_payload(r#"["foo", "bar", "baz"]"#).unwrap();
+        let result = parse_subscribe_payload(r#"["foo", "bar", "baz"]"#).unwrap();
         assert!(result.is_empty());
     }
 

@@ -4,8 +4,6 @@
 // 在 rway 中无缝运行。X11 窗口通过 Window::new_x11_window() 转换为
 // 与 Wayland 窗口统一的 Window 类型，融入平铺布局。
 
-#![cfg(feature = "xwayland")]
-
 use std::os::unix::io::OwnedFd;
 
 use smithay::{
@@ -92,9 +90,11 @@ impl XwmHandler for RwayState {
         // 从平铺树中移除普通 X11 窗口
         if !window.is_override_redirect() {
             let _ = window.set_mapped(false);
-            if let Some((&win_id, _)) = self.window_map.iter().find(|(_, w)| {
-                w.x11_surface().map_or(false, |s| s == &window)
-            }) {
+            if let Some((&win_id, _)) = self
+                .window_map
+                .iter()
+                .find(|(_, w)| w.x11_surface() == Some(&window))
+            {
                 rway_tiling::commands::remove_window(&mut self.tiling, win_id);
                 self.window_map.remove(&win_id);
                 self.relayout();
@@ -105,7 +105,7 @@ impl XwmHandler for RwayState {
         let maybe_elem = self
             .space
             .elements()
-            .find(|e| e.x11_surface().map_or(false, |s| s == &window))
+            .find(|e| e.x11_surface() == Some(&window))
             .cloned();
         if let Some(elem) = maybe_elem {
             self.space.unmap_elem(&elem);
@@ -151,7 +151,7 @@ impl XwmHandler for RwayState {
         let maybe_elem = self
             .space
             .elements()
-            .find(|e| e.x11_surface().map_or(false, |s| s == &window))
+            .find(|e| e.x11_surface() == Some(&window))
             .cloned();
         if let Some(elem) = maybe_elem {
             self.space.map_element(elem, geometry.loc, false);
@@ -179,12 +179,11 @@ impl XwmHandler for RwayState {
         if let Some(keyboard) = self.seat.get_keyboard() {
             if let Some(focused) = keyboard.current_focus() {
                 // 检查聚焦的 surface 是否属于此 XWM 管理的 X11 窗口
-                for (_, win) in &self.window_map {
+                for win in self.window_map.values() {
                     if let Some(x11) = win.x11_surface() {
-                        if x11.wl_surface().as_ref() == Some(&focused) {
-                            if x11.xwm_id() == Some(xwm) {
-                                return true;
-                            }
+                        if x11.wl_surface().as_ref() == Some(&focused) && x11.xwm_id() == Some(xwm)
+                        {
+                            return true;
                         }
                     }
                 }
@@ -214,12 +213,7 @@ impl XwmHandler for RwayState {
         }
     }
 
-    fn new_selection(
-        &mut self,
-        _xwm: XwmId,
-        selection: SelectionTarget,
-        mime_types: Vec<String>,
-    ) {
+    fn new_selection(&mut self, _xwm: XwmId, selection: SelectionTarget, mime_types: Vec<String>) {
         trace!(?selection, ?mime_types, "收到来自 X11 的选择");
         match selection {
             SelectionTarget::Clipboard => {

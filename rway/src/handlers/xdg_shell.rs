@@ -2,7 +2,9 @@
 
 use smithay::{
     delegate_xdg_shell,
-    desktop::{find_popup_root_surface, get_popup_toplevel_coords, PopupKind, PopupManager, Space, Window},
+    desktop::{
+        find_popup_root_surface, get_popup_toplevel_coords, PopupKind, PopupManager, Space, Window,
+    },
     input::{
         pointer::{Focus, GrabStartData as PointerGrabStartData},
         Seat,
@@ -89,7 +91,11 @@ impl XdgShellHandler for RwayState {
             let window = self
                 .space
                 .elements()
-                .find(|w| w.toplevel().map(|t| t.wl_surface() == wl_surface).unwrap_or(false))
+                .find(|w| {
+                    w.toplevel()
+                        .map(|t| t.wl_surface() == wl_surface)
+                        .unwrap_or(false)
+                })
                 .unwrap()
                 .clone();
             let initial_window_location = self.space.element_location(&window).unwrap();
@@ -120,7 +126,11 @@ impl XdgShellHandler for RwayState {
             let window = self
                 .space
                 .elements()
-                .find(|w| w.toplevel().map(|t| t.wl_surface() == wl_surface).unwrap_or(false))
+                .find(|w| {
+                    w.toplevel()
+                        .map(|t| t.wl_surface() == wl_surface)
+                        .unwrap_or(false)
+                })
                 .unwrap()
                 .clone();
             let initial_window_location = self.space.element_location(&window).unwrap();
@@ -142,12 +152,7 @@ impl XdgShellHandler for RwayState {
         }
     }
 
-    fn grab(
-        &mut self,
-        _surface: PopupSurface,
-        _seat: wl_seat::WlSeat,
-        _serial: Serial,
-    ) {
+    fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
         // TODO：弹窗抓取
     }
 }
@@ -183,7 +188,11 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
     // 处理顶层窗口的初始 configure
     if let Some(window) = space
         .elements()
-        .find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false))
+        .find(|w| {
+            w.toplevel()
+                .map(|t| t.wl_surface() == surface)
+                .unwrap_or(false)
+        })
         .cloned()
     {
         let initial_configure_sent = with_states(surface, |states| {
@@ -223,11 +232,11 @@ impl RwayState {
         let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
             return;
         };
-        let Some(window) = self
-            .space
-            .elements()
-            .find(|w| w.toplevel().map(|t| t.wl_surface() == &root).unwrap_or(false))
-        else {
+        let Some(window) = self.space.elements().find(|w| {
+            w.toplevel()
+                .map(|t| t.wl_surface() == &root)
+                .unwrap_or(false)
+        }) else {
             return;
         };
 

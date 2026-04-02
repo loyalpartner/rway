@@ -89,8 +89,8 @@ fn dispatch_ipc_message(state: &RwayState, msg_type: u32, payload: &[u8]) -> Vec
         3 => handle_get_outputs(state),
         4 => handle_get_tree(state),
         7 => handle_get_version(),
-        100 => serde_json::json!([]),  // GET_INPUTS: 空列表
-        101 => serde_json::json!([]),  // GET_SEATS: 空列表
+        100 => serde_json::json!([]), // GET_INPUTS: 空列表
+        101 => serde_json::json!([]), // GET_SEATS: 空列表
         _ => serde_json::json!([{"success": false, "error": "unsupported"}]),
     };
 
@@ -173,18 +173,40 @@ fn handle_get_version() -> serde_json::Value {
 // ── 辅助函数 ──────────────────────────────────────────────────
 
 fn output_rect(state: &RwayState) -> IpcRect {
-    state.space.outputs().next()
+    state
+        .space
+        .outputs()
+        .next()
         .and_then(|o| state.space.output_geometry(o))
-        .map(|geo| IpcRect { x: geo.loc.x, y: geo.loc.y, width: geo.size.w, height: geo.size.h })
-        .unwrap_or(IpcRect { x: 0, y: 0, width: 1920, height: 1080 })
+        .map(|geo| IpcRect {
+            x: geo.loc.x,
+            y: geo.loc.y,
+            width: geo.size.w,
+            height: geo.size.h,
+        })
+        .unwrap_or(IpcRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        })
 }
 
 fn zero_rect() -> IpcRect {
-    IpcRect { x: 0, y: 0, width: 0, height: 0 }
+    IpcRect {
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+    }
 }
 
 /// 递归构建 sway 兼容的 IPC 树节点
-fn build_tree_node(state: &RwayState, node_id: rway_tiling::NodeId, parent_rect: &IpcRect) -> TreeNode {
+fn build_tree_node(
+    state: &RwayState,
+    node_id: rway_tiling::NodeId,
+    parent_rect: &IpcRect,
+) -> TreeNode {
     let Some(node) = state.tiling.get(node_id) else {
         return empty_tree_node(node_id);
     };
@@ -192,11 +214,21 @@ fn build_tree_node(state: &RwayState, node_id: rway_tiling::NodeId, parent_rect:
     let (node_type, layout, name, rect) = match &node.data {
         rway_tiling::NodeData::Root => ("root", "splith", None, parent_rect.clone()),
         rway_tiling::NodeData::Output { name, geometry } => (
-            "output", "output", Some(name.clone()),
-            IpcRect { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height },
+            "output",
+            "output",
+            Some(name.clone()),
+            IpcRect {
+                x: geometry.x,
+                y: geometry.y,
+                width: geometry.width,
+                height: geometry.height,
+            },
         ),
         rway_tiling::NodeData::Workspace { name, .. } => (
-            "workspace", "splith", Some(name.clone()), parent_rect.clone(),
+            "workspace",
+            "splith",
+            Some(name.clone()),
+            parent_rect.clone(),
         ),
         rway_tiling::NodeData::Container { layout, .. } => (
             "con",
@@ -206,16 +238,25 @@ fn build_tree_node(state: &RwayState, node_id: rway_tiling::NodeId, parent_rect:
                 rway_tiling::Layout::Tabbed => "tabbed",
                 rway_tiling::Layout::Stacked => "stacked",
             },
-            None, parent_rect.clone(),
+            None,
+            parent_rect.clone(),
         ),
         rway_tiling::NodeData::Window { geometry, .. } => (
-            "con", "none", None,
-            IpcRect { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height },
+            "con",
+            "none",
+            None,
+            IpcRect {
+                x: geometry.x,
+                y: geometry.y,
+                width: geometry.width,
+                height: geometry.height,
+            },
         ),
     };
 
     let children: Vec<rway_tiling::NodeId> = state.tiling.children(node_id).to_vec();
-    let child_nodes: Vec<TreeNode> = children.iter()
+    let child_nodes: Vec<TreeNode> = children
+        .iter()
         .map(|&cid| build_tree_node(state, cid, &rect))
         .collect();
     let focus: Vec<i64> = children.iter().map(|c| c.0 as i64).collect();
@@ -245,10 +286,16 @@ fn empty_tree_node(node_id: rway_tiling::NodeId) -> TreeNode {
         name: None,
         node_type: "con".to_string(),
         layout: "none".to_string(),
-        focused: false, urgent: false,
-        rect: zero_rect(), window_rect: zero_rect(),
-        deco_rect: zero_rect(), geometry: zero_rect(),
-        nodes: vec![], floating_nodes: vec![],
-        focus: vec![], app_id: None, window: None,
+        focused: false,
+        urgent: false,
+        rect: zero_rect(),
+        window_rect: zero_rect(),
+        deco_rect: zero_rect(),
+        geometry: zero_rect(),
+        nodes: vec![],
+        floating_nodes: vec![],
+        focus: vec![],
+        app_id: None,
+        window: None,
     }
 }

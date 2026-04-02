@@ -45,11 +45,8 @@ pub fn remove_window(tree: &mut Tree, window_id: u64) -> bool {
     };
 
     let parent_id = tree.parent(win_id);
-    let child_index = parent_id.and_then(|pid| {
-        tree.children(pid)
-            .iter()
-            .position(|&c| c == win_id)
-    });
+    let child_index =
+        parent_id.and_then(|pid| tree.children(pid).iter().position(|&c| c == win_id));
 
     tree.remove_node(win_id);
 
@@ -100,7 +97,10 @@ pub fn toggle_floating(tree: &mut Tree, window_id: u64) -> bool {
         None => return false,
     };
     if let Some(node) = tree.get_mut(win_node_id) {
-        if let NodeData::Window { ref mut floating, .. } = node.data {
+        if let NodeData::Window {
+            ref mut floating, ..
+        } = node.data
+        {
             *floating = !*floating;
             return true;
         }
@@ -275,9 +275,10 @@ pub fn focus_child(tree: &mut Tree) -> bool {
             let idx = (*focused_child).min(children.len().saturating_sub(1));
             if let Some(&child_id) = children.get(idx) {
                 // 如果子节点是窗口，回到叶子层级
-                let is_leaf = tree.get(child_id).map(|n| {
-                    matches!(n.data, NodeData::Window { .. })
-                }).unwrap_or(false);
+                let is_leaf = tree
+                    .get(child_id)
+                    .map(|n| matches!(n.data, NodeData::Window { .. }))
+                    .unwrap_or(false);
                 tree.focus_node = if is_leaf { None } else { Some(child_id) };
                 true
             } else {
@@ -287,9 +288,10 @@ pub fn focus_child(tree: &mut Tree) -> bool {
         NodeData::Workspace { .. } => {
             let children: Vec<NodeId> = tree.children(current).to_vec();
             if let Some(&child_id) = children.first() {
-                let is_leaf = tree.get(child_id).map(|n| {
-                    matches!(n.data, NodeData::Window { .. })
-                }).unwrap_or(false);
+                let is_leaf = tree
+                    .get(child_id)
+                    .map(|n| matches!(n.data, NodeData::Window { .. }))
+                    .unwrap_or(false);
                 tree.focus_node = if is_leaf { None } else { Some(child_id) };
                 true
             } else {
@@ -307,7 +309,10 @@ pub fn set_floating(tree: &mut Tree, window_id: u64, enable: bool) -> bool {
         None => return false,
     };
     if let Some(node) = tree.get_mut(win_node_id) {
-        if let NodeData::Window { ref mut floating, .. } = node.data {
+        if let NodeData::Window {
+            ref mut floating, ..
+        } = node.data
+        {
             *floating = enable;
             return true;
         }
@@ -505,7 +510,10 @@ pub fn set_fullscreen_global(tree: &mut Tree, window_id: u64, enable: bool) -> b
 pub fn toggle_fullscreen_global(tree: &mut Tree, window_id: u64) -> bool {
     let current = find_window_by_id(tree, window_id).and_then(|id| {
         tree.get(id).and_then(|n| {
-            if let NodeData::Window { fullscreen_global, .. } = &n.data {
+            if let NodeData::Window {
+                fullscreen_global, ..
+            } = &n.data
+            {
                 Some(!*fullscreen_global)
             } else {
                 None
@@ -588,7 +596,11 @@ pub fn focus_next_sibling(tree: &mut Tree) -> bool {
 
     let new_idx = current_idx + 1;
     if let Some(node) = tree.get_mut(parent_id) {
-        if let NodeData::Container { ref mut focused_child, .. } = node.data {
+        if let NodeData::Container {
+            ref mut focused_child,
+            ..
+        } = node.data
+        {
             *focused_child = new_idx;
             return true;
         }
@@ -626,7 +638,11 @@ pub fn focus_prev_sibling(tree: &mut Tree) -> bool {
 
     let new_idx = current_idx - 1;
     if let Some(node) = tree.get_mut(parent_id) {
-        if let NodeData::Container { ref mut focused_child, .. } = node.data {
+        if let NodeData::Container {
+            ref mut focused_child,
+            ..
+        } = node.data
+        {
             *focused_child = new_idx;
             return true;
         }
@@ -722,13 +738,15 @@ fn wrap_with_container(
 
     // 6. 更新父节点的 focused_child（若父是 Container）
     // 先取 children 数量，再做可变借用，避免借用冲突
-    let parent_children_len = tree
-        .get(parent_id)
-        .map(|n| n.children.len())
-        .unwrap_or(0);
+    let parent_children_len = tree.get(parent_id).map(|n| n.children.len()).unwrap_or(0);
 
     if let Some(parent_node) = tree.get_mut(parent_id) {
-        if let NodeData::Container { ref mut focused_child, ref mut sizes, .. } = parent_node.data {
+        if let NodeData::Container {
+            ref mut focused_child,
+            ref mut sizes,
+            ..
+        } = parent_node.data
+        {
             *focused_child = parent_children_len.saturating_sub(1);
             while sizes.len() < parent_children_len {
                 sizes.push(1.0);
@@ -761,15 +779,15 @@ fn find_window_recursive(tree: &Tree, node_id: NodeId, window_id: u64) -> Option
 
 /// 清理空容器（无子节点的容器自动移除）。
 fn cleanup_empty_container(tree: &mut Tree, node_id: NodeId) {
-    let is_empty_container = tree.get(node_id).map(|n| {
-        matches!(n.data, NodeData::Container { .. }) && n.children.is_empty()
-    }).unwrap_or(false);
+    let is_empty_container = tree
+        .get(node_id)
+        .map(|n| matches!(n.data, NodeData::Container { .. }) && n.children.is_empty())
+        .unwrap_or(false);
 
     if is_empty_container {
         let parent = tree.parent(node_id);
-        let child_index = parent.and_then(|pid| {
-            tree.children(pid).iter().position(|&c| c == node_id)
-        });
+        let child_index =
+            parent.and_then(|pid| tree.children(pid).iter().position(|&c| c == node_id));
         tree.remove_node(node_id);
         if let (Some(pid), Some(idx)) = (parent, child_index) {
             container_remove_child(tree, pid, idx);
@@ -786,7 +804,11 @@ fn move_focus_in(tree: &mut Tree, node_id: NodeId, direction: Direction) -> bool
     };
 
     match &node_data {
-        NodeData::Container { layout, focused_child, .. } => {
+        NodeData::Container {
+            layout,
+            focused_child,
+            ..
+        } => {
             let layout = *layout;
             let focused = *focused_child;
             let children: Vec<NodeId> = tree.children(node_id).to_vec();
@@ -801,22 +823,36 @@ fn move_focus_in(tree: &mut Tree, node_id: NodeId, direction: Direction) -> bool
             // 否则在本容器层面处理方向键
             let can_move = matches!(
                 (layout, direction),
-                (Layout::SplitH, Direction::Left) | (Layout::SplitH, Direction::Right)
-                | (Layout::SplitV, Direction::Up) | (Layout::SplitV, Direction::Down)
+                (Layout::SplitH, Direction::Left)
+                    | (Layout::SplitH, Direction::Right)
+                    | (Layout::SplitV, Direction::Up)
+                    | (Layout::SplitV, Direction::Down)
             );
 
             if can_move && !children.is_empty() {
                 let new_focus = match direction {
                     Direction::Left | Direction::Up => {
-                        if focused > 0 { focused - 1 } else { return false; }
+                        if focused > 0 {
+                            focused - 1
+                        } else {
+                            return false;
+                        }
                     }
                     Direction::Right | Direction::Down => {
-                        if focused + 1 < children.len() { focused + 1 } else { return false; }
+                        if focused + 1 < children.len() {
+                            focused + 1
+                        } else {
+                            return false;
+                        }
                     }
                 };
 
                 if let Some(node) = tree.get_mut(node_id) {
-                    if let NodeData::Container { ref mut focused_child, .. } = node.data {
+                    if let NodeData::Container {
+                        ref mut focused_child,
+                        ..
+                    } = node.data
+                    {
                         *focused_child = new_focus;
                     }
                 }
@@ -878,7 +914,11 @@ fn move_window_in(tree: &mut Tree, node_id: NodeId, direction: Direction) -> boo
     };
 
     match &node_data {
-        NodeData::Container { layout, focused_child, .. } => {
+        NodeData::Container {
+            layout,
+            focused_child,
+            ..
+        } => {
             let layout = *layout;
             let focused = *focused_child;
             let children: Vec<NodeId> = tree.children(node_id).to_vec();
@@ -896,17 +936,27 @@ fn move_window_in(tree: &mut Tree, node_id: NodeId, direction: Direction) -> boo
             // 本容器层面处理
             let can_move = matches!(
                 (layout, direction),
-                (Layout::SplitH, Direction::Left) | (Layout::SplitH, Direction::Right)
-                | (Layout::SplitV, Direction::Up) | (Layout::SplitV, Direction::Down)
+                (Layout::SplitH, Direction::Left)
+                    | (Layout::SplitH, Direction::Right)
+                    | (Layout::SplitV, Direction::Up)
+                    | (Layout::SplitV, Direction::Down)
             );
 
             if can_move && !children.is_empty() {
                 let new_pos = match direction {
                     Direction::Left | Direction::Up => {
-                        if focused > 0 { focused - 1 } else { return false; }
+                        if focused > 0 {
+                            focused - 1
+                        } else {
+                            return false;
+                        }
                     }
                     Direction::Right | Direction::Down => {
-                        if focused + 1 < children.len() { focused + 1 } else { return false; }
+                        if focused + 1 < children.len() {
+                            focused + 1
+                        } else {
+                            return false;
+                        }
                     }
                 };
 
@@ -967,11 +1017,15 @@ fn find_focused_leaf_node(tree: &Tree, node_id: NodeId) -> Option<NodeId> {
         NodeData::Container { focused_child, .. } => {
             let children = tree.children(node_id);
             let idx = (*focused_child).min(children.len().saturating_sub(1));
-            children.get(idx).and_then(|&c| find_focused_leaf_node(tree, c))
+            children
+                .get(idx)
+                .and_then(|&c| find_focused_leaf_node(tree, c))
         }
         _ => {
             let children = tree.children(node_id);
-            children.first().and_then(|&c| find_focused_leaf_node(tree, c))
+            children
+                .first()
+                .and_then(|&c| find_focused_leaf_node(tree, c))
         }
     }
 }

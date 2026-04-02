@@ -33,11 +33,15 @@ fn find_focused_in_node(state: &RwayState, node_id: rway_tiling::NodeId) -> Opti
         rway_tiling::NodeData::Container { focused_child, .. } => {
             let children = state.tiling.children(node_id);
             let idx = (*focused_child).min(children.len().saturating_sub(1));
-            children.get(idx).and_then(|&c| find_focused_in_node(state, c))
+            children
+                .get(idx)
+                .and_then(|&c| find_focused_in_node(state, c))
         }
         _ => {
             let children = state.tiling.children(node_id);
-            children.first().and_then(|&c| find_focused_in_node(state, c))
+            children
+                .first()
+                .and_then(|&c| find_focused_in_node(state, c))
         }
     }
 }

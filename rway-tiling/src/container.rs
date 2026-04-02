@@ -54,7 +54,10 @@ pub fn make_container(layout: Layout) -> NodeData {
 /// 将容器的布局类型替换为新类型。
 pub fn set_container_layout(tree: &mut Tree, container_id: NodeId, layout: Layout) {
     if let Some(node) = tree.get_mut(container_id) {
-        if let NodeData::Container { layout: ref mut l, .. } = node.data {
+        if let NodeData::Container {
+            layout: ref mut l, ..
+        } = node.data
+        {
             *l = layout;
         }
     }
@@ -80,7 +83,11 @@ pub fn set_focused_child(tree: &mut Tree, container_id: NodeId, child_id: NodeId
     };
 
     if let Some(node) = tree.get_mut(container_id) {
-        if let NodeData::Container { ref mut focused_child, .. } = node.data {
+        if let NodeData::Container {
+            ref mut focused_child,
+            ..
+        } = node.data
+        {
             *focused_child = index;
             return true;
         }
@@ -139,7 +146,11 @@ mod tests {
     fn make_container_creates_splith() {
         let data = make_container(Layout::SplitH);
         match data {
-            NodeData::Container { layout, sizes, focused_child } => {
+            NodeData::Container {
+                layout,
+                sizes,
+                focused_child,
+            } => {
                 assert_eq!(layout, Layout::SplitH);
                 assert_eq!(sizes, vec![1.0, 1.0]);
                 assert_eq!(focused_child, 0);
@@ -151,13 +162,25 @@ mod tests {
     #[test]
     fn make_container_creates_splitv() {
         let data = make_container(Layout::SplitV);
-        assert!(matches!(data, NodeData::Container { layout: Layout::SplitV, .. }));
+        assert!(matches!(
+            data,
+            NodeData::Container {
+                layout: Layout::SplitV,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn make_container_creates_tabbed() {
         let data = make_container(Layout::Tabbed);
-        assert!(matches!(data, NodeData::Container { layout: Layout::Tabbed, .. }));
+        assert!(matches!(
+            data,
+            NodeData::Container {
+                layout: Layout::Tabbed,
+                ..
+            }
+        ));
     }
 
     // ── container_add_child ─────────────────────────────────
@@ -178,7 +201,7 @@ mod tests {
     fn add_child_to_non_container_does_nothing() {
         let mut tree = Tree::new();
         let root = tree.root(); // Root 类型，不是 Container
-        // 不应 panic
+                                // 不应 panic
         container_add_child(&mut tree, root);
     }
 
@@ -201,8 +224,11 @@ mod tests {
         // focused_child = 0, sizes = [1.0, 1.0]
         // 删除最后一个后 sizes = [1.0]，focused_child 应仍为 0
         container_remove_child(&mut tree, container, 1);
-        if let Some(NodeData::Container { focused_child, sizes, .. }) =
-            tree.get(container).map(|n| &n.data)
+        if let Some(NodeData::Container {
+            focused_child,
+            sizes,
+            ..
+        }) = tree.get(container).map(|n| &n.data)
         {
             assert_eq!(*focused_child, 0);
             assert_eq!(sizes.len(), 1);
@@ -216,8 +242,11 @@ mod tests {
         let (mut tree, _, container) = make_tree_with_container(Layout::SplitH);
         container_remove_child(&mut tree, container, 0);
         container_remove_child(&mut tree, container, 0);
-        if let Some(NodeData::Container { focused_child, sizes, .. }) =
-            tree.get(container).map(|n| &n.data)
+        if let Some(NodeData::Container {
+            focused_child,
+            sizes,
+            ..
+        }) = tree.get(container).map(|n| &n.data)
         {
             assert!(sizes.is_empty());
             assert_eq!(*focused_child, 0);
@@ -265,26 +294,32 @@ mod tests {
         let mut tree = Tree::new();
         let root = tree.root();
         let container = tree.add_node(root, make_container(Layout::SplitH));
-        let win1 = tree.add_node(container, NodeData::Window {
-            window_id: 1,
-            floating: false,
-            fullscreen: false,
-            fullscreen_global: false,
-            sticky: false,
-            marks: Vec::new(),
-            geometry: Rect::new(0, 0, 100, 100),
-            saved_geometry: None,
-        });
-        let _win2 = tree.add_node(container, NodeData::Window {
-            window_id: 2,
-            floating: false,
-            fullscreen: false,
-            fullscreen_global: false,
-            sticky: false,
-            marks: Vec::new(),
-            geometry: Rect::new(0, 0, 100, 100),
-            saved_geometry: None,
-        });
+        let win1 = tree.add_node(
+            container,
+            NodeData::Window {
+                window_id: 1,
+                floating: false,
+                fullscreen: false,
+                fullscreen_global: false,
+                sticky: false,
+                marks: Vec::new(),
+                geometry: Rect::new(0, 0, 100, 100),
+                saved_geometry: None,
+            },
+        );
+        let _win2 = tree.add_node(
+            container,
+            NodeData::Window {
+                window_id: 2,
+                floating: false,
+                fullscreen: false,
+                fullscreen_global: false,
+                sticky: false,
+                marks: Vec::new(),
+                geometry: Rect::new(0, 0, 100, 100),
+                saved_geometry: None,
+            },
+        );
         // focused_child = 0 → 指向 win1
         let focused = get_focused_child(&tree, container);
         assert_eq!(focused, Some(win1));
@@ -301,11 +336,14 @@ mod tests {
     fn get_focused_child_returns_none_for_empty_children() {
         let mut tree = Tree::new();
         let root = tree.root();
-        let container = tree.add_node(root, NodeData::Container {
-            layout: Layout::SplitH,
-            sizes: Vec::new(),
-            focused_child: 0,
-        });
+        let container = tree.add_node(
+            root,
+            NodeData::Container {
+                layout: Layout::SplitH,
+                sizes: Vec::new(),
+                focused_child: 0,
+            },
+        );
         assert!(get_focused_child(&tree, container).is_none());
     }
 
@@ -316,26 +354,32 @@ mod tests {
         let mut tree = Tree::new();
         let root = tree.root();
         let container = tree.add_node(root, make_container(Layout::SplitH));
-        let win1 = tree.add_node(container, NodeData::Window {
-            window_id: 1,
-            floating: false,
-            fullscreen: false,
-            fullscreen_global: false,
-            sticky: false,
-            marks: Vec::new(),
-            geometry: Rect::new(0, 0, 100, 100),
-            saved_geometry: None,
-        });
-        let win2 = tree.add_node(container, NodeData::Window {
-            window_id: 2,
-            floating: false,
-            fullscreen: false,
-            fullscreen_global: false,
-            sticky: false,
-            marks: Vec::new(),
-            geometry: Rect::new(0, 0, 100, 100),
-            saved_geometry: None,
-        });
+        let win1 = tree.add_node(
+            container,
+            NodeData::Window {
+                window_id: 1,
+                floating: false,
+                fullscreen: false,
+                fullscreen_global: false,
+                sticky: false,
+                marks: Vec::new(),
+                geometry: Rect::new(0, 0, 100, 100),
+                saved_geometry: None,
+            },
+        );
+        let win2 = tree.add_node(
+            container,
+            NodeData::Window {
+                window_id: 2,
+                floating: false,
+                fullscreen: false,
+                fullscreen_global: false,
+                sticky: false,
+                marks: Vec::new(),
+                geometry: Rect::new(0, 0, 100, 100),
+                saved_geometry: None,
+            },
+        );
 
         let ok = set_focused_child(&mut tree, container, win2);
         assert!(ok);
@@ -351,16 +395,19 @@ mod tests {
         let mut tree = Tree::new();
         let root = tree.root();
         let container = tree.add_node(root, make_container(Layout::SplitH));
-        let stranger = tree.add_node(root, NodeData::Window {
-            window_id: 99,
-            floating: false,
-            fullscreen: false,
-            fullscreen_global: false,
-            sticky: false,
-            marks: Vec::new(),
-            geometry: Rect::new(0, 0, 100, 100),
-            saved_geometry: None,
-        });
+        let stranger = tree.add_node(
+            root,
+            NodeData::Window {
+                window_id: 99,
+                floating: false,
+                fullscreen: false,
+                fullscreen_global: false,
+                sticky: false,
+                marks: Vec::new(),
+                geometry: Rect::new(0, 0, 100, 100),
+                saved_geometry: None,
+            },
+        );
         let ok = set_focused_child(&mut tree, container, stranger);
         assert!(!ok);
     }

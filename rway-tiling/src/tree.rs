@@ -20,7 +20,12 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// 判断矩形面积是否有效（宽高均为正数）
@@ -49,10 +54,7 @@ pub enum NodeData {
     Root,
 
     /// 物理输出（显示器）
-    Output {
-        name: String,
-        geometry: Rect,
-    },
+    Output { name: String, geometry: Rect },
 
     /// 工作区，归属某个输出
     Workspace {
@@ -384,11 +386,14 @@ mod tests {
         let mut tree = Tree::new();
         let root = tree.root();
         let output = tree.add_node(root, output_data("eDP-1"));
-        let ws = tree.add_node(output, NodeData::Workspace {
-            name: "1".into(),
+        let ws = tree.add_node(
             output,
-            is_visible: true,
-        });
+            NodeData::Workspace {
+                name: "1".into(),
+                output,
+                is_visible: true,
+            },
+        );
         let win = tree.add_node(ws, window_data(42));
 
         assert_eq!(tree.parent(win), Some(ws));
@@ -430,11 +435,14 @@ mod tests {
         let mut tree = Tree::new();
         let root = tree.root();
         let output = tree.add_node(root, output_data("eDP-1"));
-        let ws = tree.add_node(output, NodeData::Workspace {
-            name: "1".into(),
+        let ws = tree.add_node(
             output,
-            is_visible: true,
-        });
+            NodeData::Workspace {
+                name: "1".into(),
+                output,
+                is_visible: true,
+            },
+        );
         let win = tree.add_node(ws, window_data(1));
 
         tree.remove_node(output);
@@ -484,7 +492,10 @@ mod tests {
         let child = tree.add_node(root, window_data(1));
 
         if let Some(node) = tree.get_mut(child) {
-            if let NodeData::Window { ref mut floating, .. } = node.data {
+            if let NodeData::Window {
+                ref mut floating, ..
+            } = node.data
+            {
                 *floating = true;
             }
         }
@@ -518,7 +529,13 @@ mod tests {
     fn node_data_container_clone() {
         let data = container_data(Layout::SplitH);
         let cloned = data.clone();
-        assert!(matches!(cloned, NodeData::Container { layout: Layout::SplitH, .. }));
+        assert!(matches!(
+            cloned,
+            NodeData::Container {
+                layout: Layout::SplitH,
+                ..
+            }
+        ));
     }
 
     #[test]

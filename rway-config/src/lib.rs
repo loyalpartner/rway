@@ -7,8 +7,8 @@ pub mod types;
 pub use parser::{parse, parse_file, ParseError};
 pub use types::{
     Action, AssignRule, BarConfig, Bindcode, BindingFlags, BorderAction, BorderStyle, ColorConfig,
-    Config, Direction, ExecCommand, FloatingAction, FocusFollowsMouse, FullscreenAction, GapsConfig,
-    HideEdgeBorders, InputConfig, Keybinding, LayoutType, ModeBlock, Modifier, OpacityAction,
-    OutputBackground, OutputConfig, ResizeAxis, ResizeUnit, SeatConfig, SplitDirection,
-    StickyAction, WindowCriteria, WindowRule, WindowRuleAction, WorkspaceConfig,
+    Config, Direction, ExecCommand, FloatingAction, FocusFollowsMouse, FullscreenAction,
+    GapsConfig, HideEdgeBorders, InputConfig, Keybinding, LayoutType, ModeBlock, Modifier,
+    OpacityAction, OutputBackground, OutputConfig, ResizeAxis, ResizeUnit, SeatConfig,
+    SplitDirection, StickyAction, WindowCriteria, WindowRule, WindowRuleAction, WorkspaceConfig,
 };
