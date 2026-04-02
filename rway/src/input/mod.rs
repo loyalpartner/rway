@@ -30,7 +30,9 @@ impl RwayState {
                 // 克隆 keybindings 引用以避免借用冲突
                 let bindings = self.config.keybindings.clone();
 
-                let Some(keyboard) = self.seat.get_keyboard() else { return };
+                let Some(keyboard) = self.seat.get_keyboard() else {
+                    return;
+                };
                 keyboard.input::<(), _>(
                     self,
                     event.key_code(),
@@ -69,7 +71,9 @@ impl RwayState {
             }
 
             InputEvent::PointerMotion { event, .. } => {
-                let Some(pointer) = self.seat.get_pointer() else { return };
+                let Some(pointer) = self.seat.get_pointer() else {
+                    return;
+                };
                 let current = pointer.current_location();
 
                 // 相对移动：累加到当前位置，并 clamp 到输出范围
@@ -103,14 +107,20 @@ impl RwayState {
             }
 
             InputEvent::PointerMotionAbsolute { event, .. } => {
-                let Some(output) = self.space.outputs().next() else { return };
-                let Some(output_geo) = self.space.output_geometry(output) else { return };
+                let Some(output) = self.space.outputs().next() else {
+                    return;
+                };
+                let Some(output_geo) = self.space.output_geometry(output) else {
+                    return;
+                };
 
                 // 将绝对坐标变换到逻辑坐标系
                 let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
 
                 let serial = SERIAL_COUNTER.next_serial();
-                let Some(pointer) = self.seat.get_pointer() else { return };
+                let Some(pointer) = self.seat.get_pointer() else {
+                    return;
+                };
                 let under = self.surface_under(pos);
 
                 pointer.motion(
@@ -126,8 +136,12 @@ impl RwayState {
             }
 
             InputEvent::PointerButton { event, .. } => {
-                let Some(pointer) = self.seat.get_pointer() else { return };
-                let Some(keyboard) = self.seat.get_keyboard() else { return };
+                let Some(pointer) = self.seat.get_pointer() else {
+                    return;
+                };
+                let Some(keyboard) = self.seat.get_keyboard() else {
+                    return;
+                };
 
                 let serial = SERIAL_COUNTER.next_serial();
                 let button = event.button_code();
@@ -212,7 +226,9 @@ impl RwayState {
                     }
                 }
 
-                let Some(pointer) = self.seat.get_pointer() else { return };
+                let Some(pointer) = self.seat.get_pointer() else {
+                    return;
+                };
                 pointer.axis(self, frame);
                 pointer.frame(self);
             }

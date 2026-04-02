@@ -46,8 +46,12 @@ impl XdgShellHandler for RwayState {
         // Allocate window ID and insert into tiling tree
         // Use pending_split direction if set (from splith/splitv command), otherwise default SplitH
         let window_id = self.alloc_window_id();
-        let split_layout = self.pending_split.take().unwrap_or(rway_tiling::Layout::SplitH);
-        self.tiling.insert_window_with_layout(window_id, split_layout);
+        let split_layout = self
+            .pending_split
+            .take()
+            .unwrap_or(rway_tiling::Layout::SplitH);
+        self.tiling
+            .insert_window_with_layout(window_id, split_layout);
         self.window_map.insert(window_id, window.clone());
 
         // 映射到 Space 并提升到顶层

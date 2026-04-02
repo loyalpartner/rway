@@ -1176,7 +1176,11 @@ impl Tree {
                 // Update focused_child to the new window
                 let new_count = self.children(parent_id).len();
                 if let Some(node) = self.get_mut(parent_id) {
-                    if let NodeData::Container { ref mut focused_child, .. } = node.data {
+                    if let NodeData::Container {
+                        ref mut focused_child,
+                        ..
+                    } = node.data
+                    {
                         *focused_child = new_count - 1;
                     }
                 }
@@ -2158,11 +2162,14 @@ mod tests {
         let mut tree = Tree::new();
         let root = tree.root();
         let out = tree.add_node(root, output_data("eDP-1"));
-        tree.add_node(out, NodeData::Workspace {
-            name: "1".into(),
-            output: out,
-            is_visible: true,
-        });
+        tree.add_node(
+            out,
+            NodeData::Workspace {
+                name: "1".into(),
+                output: out,
+                is_visible: true,
+            },
+        );
         tree
     }
 
@@ -2181,7 +2188,11 @@ mod tests {
         let siblings = tree.children(container_id);
 
         // All 3 windows should be direct children of the same container
-        assert_eq!(siblings.len(), 3, "3 windows should be siblings, not nested");
+        assert_eq!(
+            siblings.len(),
+            3,
+            "3 windows should be siblings, not nested"
+        );
     }
 
     #[test]
@@ -2198,8 +2209,11 @@ mod tests {
         assert_eq!(geoms.len(), 3);
         // Each window should get ~1/3 of 1920 = 640
         for (_, g) in &geoms {
-            assert!(g.width > 600 && g.width < 700,
-                "each window should be ~640px wide, got {}", g.width);
+            assert!(
+                g.width > 600 && g.width < 700,
+                "each window should be ~640px wide, got {}",
+                g.width
+            );
         }
     }
 
@@ -2238,11 +2252,25 @@ mod tests {
         let ws = tree.focused_workspace().unwrap();
         let top_container = tree.children(ws)[0];
         let top_children = tree.children(top_container);
-        assert_eq!(top_children.len(), 2, "top level should still have 2 children");
+        assert_eq!(
+            top_children.len(),
+            2,
+            "top level should still have 2 children"
+        );
 
         // One of them should be a nested SplitV container
         let nested = top_children.iter().find(|&&id| {
-            tree.get(id).map(|n| matches!(n.data, NodeData::Container { layout: Layout::SplitV, .. })).unwrap_or(false)
+            tree.get(id)
+                .map(|n| {
+                    matches!(
+                        n.data,
+                        NodeData::Container {
+                            layout: Layout::SplitV,
+                            ..
+                        }
+                    )
+                })
+                .unwrap_or(false)
         });
         assert!(nested.is_some(), "should have a nested SplitV container");
     }

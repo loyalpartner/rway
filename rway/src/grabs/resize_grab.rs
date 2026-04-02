@@ -111,13 +111,14 @@ impl PointerGrab<RwayState> for ResizeSurfaceGrab {
             new_window_height = (self.initial_rect.size.h as f64 + delta.y) as i32;
         }
 
-        let Some(toplevel) = self.window.toplevel() else { return };
-        let (min_size, max_size) =
-            compositor::with_states(toplevel.wl_surface(), |states| {
-                let mut guard = states.cached_state.get::<SurfaceCachedState>();
-                let data = guard.current();
-                (data.min_size, data.max_size)
-            });
+        let Some(toplevel) = self.window.toplevel() else {
+            return;
+        };
+        let (min_size, max_size) = compositor::with_states(toplevel.wl_surface(), |states| {
+            let mut guard = states.cached_state.get::<SurfaceCachedState>();
+            let data = guard.current();
+            (data.min_size, data.max_size)
+        });
 
         let min_width = min_size.w.max(1);
         let min_height = min_size.h.max(1);
@@ -300,7 +301,10 @@ impl ResizeSurfaceState {
     {
         compositor::with_states(surface, |states| {
             states.data_map.insert_if_missing(RefCell::<Self>::default);
-            let state = states.data_map.get::<RefCell<Self>>().expect("just inserted");
+            let state = states
+                .data_map
+                .get::<RefCell<Self>>()
+                .expect("just inserted");
             cb(&mut state.borrow_mut())
         })
     }

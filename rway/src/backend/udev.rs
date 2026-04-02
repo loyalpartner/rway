@@ -279,7 +279,13 @@ pub(crate) fn run_udev() {
 
     // ── 7. 初始化 libinput ──
     let mut libinput_context = Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(
-        state.udev_data.as_ref().expect("udev backend initialized").session.clone().into(),
+        state
+            .udev_data
+            .as_ref()
+            .expect("udev backend initialized")
+            .session
+            .clone()
+            .into(),
     );
     libinput_context
         .udev_assign_seat(&seat_name)
@@ -759,7 +765,11 @@ fn connector_connected(
 
     // 计算输出位置（水平排列）
     let x = state.space.outputs().fold(0, |acc, o| {
-        acc + state.space.output_geometry(o).map(|g| g.size.w).unwrap_or(0)
+        acc + state
+            .space
+            .output_geometry(o)
+            .map(|g| g.size.w)
+            .unwrap_or(0)
     });
     let position = (x, 0).into();
 
