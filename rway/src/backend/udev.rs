@@ -3,8 +3,6 @@
 // 允许 rway 无需宿主合成器，直接通过 DRM/KMS 驱动显示器。
 // 参考实现：smithay/anvil/src/udev.rs
 
-#![cfg(feature = "udev")]
-
 use std::{
     collections::HashMap,
     io,
@@ -33,8 +31,6 @@ use smithay::{
         input::InputEvent,
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
-            damage::Error as OutputDamageTrackerError,
-            element::RenderElementStates,
             gles::GlesRenderer,
             multigpu::{gbm::GbmGlesBackend, GpuManager, MultiRenderer},
             ImportDma, ImportEgl, ImportMemWl,
@@ -47,24 +43,21 @@ use smithay::{
         SwapBuffersError,
     },
     delegate_dmabuf,
-    desktop::space::Space,
-    input::keyboard::LedState,
-    output::{Mode as WlMode, Output, PhysicalProperties, Subpixel},
+    output::{Mode as WlMode, Output, PhysicalProperties},
     reexports::{
         calloop::{
             timer::{TimeoutAction, Timer},
             EventLoop, LoopHandle, RegistrationToken,
         },
-        drm::control::{connector, crtc, Device, ModeTypeFlags},
+        drm::control::{connector, crtc, ModeTypeFlags},
         input::{DeviceCapability, Libinput},
         rustix::fs::OFlags,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{backend::GlobalId, Display, DisplayHandle},
     },
-    utils::{DeviceFd, Logical, Monotonic, Point, Scale, Time, Transform},
-    wayland::{
-        dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
-        presentation::Refresh,
+    utils::{DeviceFd, Monotonic, Scale, Time},
+    wayland::dmabuf::{
+        DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier,
     },
 };
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
@@ -105,7 +98,7 @@ struct UdevOutputId {
 /// Udev 后端的数据结构
 pub struct UdevData {
     pub session: LibSeatSession,
-    dh: DisplayHandle,
+    _dh: DisplayHandle,
     dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     primary_gpu: DrmNode,
     gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
@@ -213,7 +206,7 @@ delegate_dmabuf!(RwayState);
 pub fn run_udev() {
     let mut event_loop: EventLoop<RwayState> = EventLoop::try_new().unwrap();
     let display: Display<RwayState> = Display::new().unwrap();
-    let mut display_handle = display.handle();
+    let display_handle = display.handle();
 
     // ── 1. 初始化 libseat 会话 ──
     let (session, notifier) = match LibSeatSession::new() {
@@ -259,7 +252,7 @@ pub fn run_udev() {
 
     // ── 4. 创建 UdevData ──
     let udev_data = UdevData {
-        dh: display_handle.clone(),
+        _dh: display_handle.clone(),
         dmabuf_state: None,
         session,
         primary_gpu,
@@ -575,7 +568,7 @@ fn device_added(
         })
         .ok_or(DeviceAddError::PrimaryGpuMissing)?;
 
-    let framebuffer_exporter = GbmFramebufferExporter::new(gbm.clone(), render_node.into());
+    let framebuffer_exporter = GbmFramebufferExporter::new(gbm.clone(), render_node);
 
     let color_formats = if std::env::var("RWAY_DISABLE_10BIT").is_ok() {
         SUPPORTED_FORMATS_8BIT_ONLY
@@ -727,7 +720,7 @@ fn connector_connected(
     );
     info!(crtc = ?crtc, "正在设置连接器 {}", output_name);
 
-    let drm_device = device.drm_output_manager.device();
+    let _drm_device = device.drm_output_manager.device();
 
     // 显示器信息（暂时使用默认值，需要 libdisplay-info 获取 EDID 数据）
     let make = "Unknown".to_string();
@@ -826,7 +819,7 @@ fn connector_connected(
 fn connector_disconnected(
     state: &mut RwayState,
     node: DrmNode,
-    connector: connector::Info,
+    _connector: connector::Info,
     crtc: crtc::Handle,
 ) {
     let udev = state.udev_data.as_mut().unwrap();
@@ -919,7 +912,7 @@ fn frame_finish(
 
     let seq = metadata.as_ref().map(|m| m.sequence).unwrap_or(0);
 
-    let (clock, flags) = if let Some(tp) = tp {
+    let (clock, _flags) = if let Some(tp) = tp {
         (
             tp.into(),
             wp_presentation_feedback::Kind::Vsync
@@ -987,7 +980,7 @@ fn frame_finish(
         .map_err(Into::<SwapBuffersError>::into);
 
     let schedule_render = match submit_result {
-        Ok(user_data) => {
+        Ok(_user_data) => {
             // user_data 是 Option<()>，我们简化不处理 presentation feedback
             true
         }
@@ -1140,7 +1133,7 @@ fn render_surface(
     .unwrap_or_default();
 
     // 组合渲染元素：光标（z-order 最高）+ 窗口
-    let mut elements: Vec<UdevRenderElement<'_>> = Vec::new();
+    let mut elements: Vec<UdevRenderElement<'_>> = Vec::with_capacity(space_elements.len() + 1);
 
     // 光标元素：Smithay DRM compositor 会自动检测 Kind::Cursor 并分配到硬件光标平面
     if !matches!(
@@ -1166,16 +1159,18 @@ fn render_surface(
 
     let reschedule = match result {
         Ok(render_result) => {
-            // 即使 primary plane 没变化（is_empty），cursor plane 位置可能变了
-            // 始终提交帧以确保硬件光标位置更新
-            if let Err(err) = surface.drm_output.queue_frame(Some(())) {
-                warn!("提交帧失败: {:?}", err);
+            if !render_result.is_empty {
+                if let Err(err) = surface.drm_output.queue_frame(Some(())) {
+                    warn!("提交帧失败: {:?}", err);
+                }
+                false
+            } else {
+                // 无 damage — 不提交帧，延迟重试
+                true
             }
-            false
         }
         Err(err) => {
             warn!("渲染出错: {:#?}", err);
-            // 简化错误处理：大多数情况下重新调度
             true
         }
     };

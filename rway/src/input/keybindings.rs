@@ -17,7 +17,9 @@ pub fn find_matching_binding<'a>(
     let key_name = keysym_to_name(keysym)?;
 
     for binding in keybindings {
-        if binding.key.eq_ignore_ascii_case(&key_name) && modifiers_match(&binding.modifiers, modifiers) {
+        if binding.key.eq_ignore_ascii_case(&key_name)
+            && modifiers_match(&binding.modifiers, modifiers)
+        {
             return Some(&binding.action);
         }
     }
@@ -31,9 +33,7 @@ pub fn execute_action(state: &mut RwayState, action: &Action) {
             tracing::info!("exec: {}", cmd);
             let parts: Vec<&str> = cmd.split_whitespace().collect();
             if let Some((program, args)) = parts.split_first() {
-                let _ = std::process::Command::new(program)
-                    .args(args)
-                    .spawn();
+                let _ = std::process::Command::new(program).args(args).spawn();
             }
         }
         Action::Focus(dir) => {
@@ -76,17 +76,33 @@ pub fn execute_action(state: &mut RwayState, action: &Action) {
             rway_tiling::commands::focus_child(&mut state.tiling);
             update_keyboard_focus(state);
         }
-        Action::Resize { grow, axis, amount, unit } => {
+        Action::Resize {
+            grow,
+            axis,
+            amount,
+            unit,
+        } => {
             if let Some(win_id) = rway_tiling::commands::find_focused_window_id(&state.tiling) {
-                if let Some(node_id) = rway_tiling::commands::find_node_by_window_id(&state.tiling, win_id) {
-                    let delta = if *grow { *amount as f64 } else { -(*amount as f64) };
+                if let Some(node_id) =
+                    rway_tiling::commands::find_node_by_window_id(&state.tiling, win_id)
+                {
+                    let delta = if *grow {
+                        *amount as f64
+                    } else {
+                        -(*amount as f64)
+                    };
                     let tiling_axis = match axis {
                         rway_config::ResizeAxis::Width => rway_tiling::commands::ResizeAxis::Width,
-                        rway_config::ResizeAxis::Height => rway_tiling::commands::ResizeAxis::Height,
+                        rway_config::ResizeAxis::Height => {
+                            rway_tiling::commands::ResizeAxis::Height
+                        }
                     };
                     let _ = unit; // unit is informational for now
                     rway_tiling::commands::resize_container(
-                        &mut state.tiling, node_id, tiling_axis, delta,
+                        &mut state.tiling,
+                        node_id,
+                        tiling_axis,
+                        delta,
                     );
                     state.relayout();
                 }
@@ -114,10 +130,18 @@ pub fn execute_action(state: &mut RwayState, action: &Action) {
         Action::Kill => {
             // 关闭当前聚焦的窗口
             let focus = state.seat.get_keyboard().and_then(|kb| kb.current_focus());
-            if let Some(window) = state.space.elements().find(|w| {
-                let wl = w.toplevel().map(|t| t.wl_surface().clone()).or_else(|| w.wl_surface().map(|s| s.into_owned()));
-                wl.as_ref() == focus.as_ref()
-            }).cloned() {
+            if let Some(window) = state
+                .space
+                .elements()
+                .find(|w| {
+                    let wl = w
+                        .toplevel()
+                        .map(|t| t.wl_surface().clone())
+                        .or_else(|| w.wl_surface().map(|s| s.into_owned()));
+                    wl.as_ref() == focus.as_ref()
+                })
+                .cloned()
+            {
                 if let Some(toplevel) = window.toplevel() {
                     toplevel.send_close();
                 }
@@ -175,54 +199,7 @@ pub fn execute_action(state: &mut RwayState, action: &Action) {
 
 /// 更新键盘焦点到平铺树当前聚焦的窗口
 fn update_keyboard_focus(state: &mut RwayState) {
-    let focused_ws = rway_tiling::workspace::get_focused_workspace(&state.tiling);
-    if let Some(ws_id) = focused_ws {
-        // 尝试从聚焦工作区中找到聚焦的窗口
-        if let Some(win_surface) = find_focused_window_surface(state, ws_id) {
-            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-            state.seat.get_keyboard().unwrap().set_focus(
-                state,
-                Some(win_surface),
-                serial,
-            );
-            return;
-        }
-    }
-    // 没有聚焦窗口时清除焦点
-    let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-    state.seat.get_keyboard().unwrap().set_focus(
-        state,
-        Option::<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>::None,
-        serial,
-    );
-}
-
-/// 从平铺树中递归找到当前聚焦的窗口 ID
-fn find_focused_window_surface(
-    state: &RwayState,
-    node_id: rway_tiling::NodeId,
-) -> Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface> {
-    let node = state.tiling.get(node_id)?;
-    match &node.data {
-        rway_tiling::NodeData::Window { window_id, .. } => {
-            let window = state.window_map.get(window_id)?;
-            Some(window.toplevel()?.wl_surface().clone())
-        }
-        rway_tiling::NodeData::Container { focused_child, .. } => {
-            let children = state.tiling.children(node_id);
-            let focus_idx = (*focused_child).min(children.len().saturating_sub(1));
-            let child_id = *children.get(focus_idx)?;
-            find_focused_window_surface(state, child_id)
-        }
-        rway_tiling::NodeData::Workspace { .. } => {
-            let children = state.tiling.children(node_id);
-            children.first().and_then(|&c| find_focused_window_surface(state, c))
-        }
-        _ => {
-            let children = state.tiling.children(node_id);
-            children.first().and_then(|&c| find_focused_window_surface(state, c))
-        }
-    }
+    crate::focus::update_focus(state);
 }
 
 fn modifiers_match(required: &[Modifier], current: &ModifiersState) -> bool {
@@ -252,7 +229,9 @@ fn modifiers_match(required: &[Modifier], current: &ModifiersState) -> bool {
     }
     // 确保没有多余的修饰键被按下
     let expected_logo = required.iter().any(|m| matches!(m, Modifier::Mod4));
-    let expected_alt = required.iter().any(|m| matches!(m, Modifier::Mod1 | Modifier::Alt));
+    let expected_alt = required
+        .iter()
+        .any(|m| matches!(m, Modifier::Mod1 | Modifier::Alt));
     let expected_shift = required.iter().any(|m| matches!(m, Modifier::Shift));
     let expected_ctrl = required.iter().any(|m| matches!(m, Modifier::Control));
 

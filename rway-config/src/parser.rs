@@ -136,11 +136,15 @@ fn parse_directive(line: &str, line_no: usize, config: &mut Config) -> Result<()
         "output" => parse_output(rest, line_no, config),
         "input" => parse_input(rest, line_no, config),
         "exec_always" => {
-            config.exec_always.push(ExecCommand { command: rest.to_string() });
+            config.exec_always.push(ExecCommand {
+                command: rest.to_string(),
+            });
             Ok(())
         }
         "exec" => {
-            config.exec.push(ExecCommand { command: rest.to_string() });
+            config.exec.push(ExecCommand {
+                command: rest.to_string(),
+            });
             Ok(())
         }
         "gaps" => parse_gaps(rest, line_no, config),
@@ -195,7 +199,10 @@ fn parse_directive(line: &str, line_no: usize, config: &mut Config) -> Result<()
         "titlebar_padding" => {
             let parts: Vec<&str> = rest.split_whitespace().collect();
             if let Some(h) = parts.first().and_then(|s| s.parse::<u32>().ok()) {
-                let v = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(h);
+                let v = parts
+                    .get(1)
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(h);
                 config.titlebar_padding = Some((h, v));
             }
             Ok(())
@@ -308,7 +315,9 @@ fn parse_set(rest: &str, line_no: usize, config: &mut Config) -> Result<(), Pars
             message: "set 指令变量名不能为空".to_string(),
         });
     }
-    config.variables.insert(name.to_string(), value.trim().to_string());
+    config
+        .variables
+        .insert(name.to_string(), value.trim().to_string());
     Ok(())
 }
 
@@ -322,10 +331,22 @@ fn parse_bindsym(rest: &str, line_no: usize, config: &mut Config) -> Result<(), 
     loop {
         let (tok, after) = split_first(remaining);
         match tok {
-            "--release" => { flags.release = true; remaining = after; }
-            "--locked" => { flags.locked = true; remaining = after; }
-            "--whole-window" => { flags.whole_window = true; remaining = after; }
-            "--no-repeat" => { flags.no_repeat = true; remaining = after; }
+            "--release" => {
+                flags.release = true;
+                remaining = after;
+            }
+            "--locked" => {
+                flags.locked = true;
+                remaining = after;
+            }
+            "--whole-window" => {
+                flags.whole_window = true;
+                remaining = after;
+            }
+            "--no-repeat" => {
+                flags.no_repeat = true;
+                remaining = after;
+            }
             _ => break,
         }
     }
@@ -341,7 +362,12 @@ fn parse_bindsym(rest: &str, line_no: usize, config: &mut Config) -> Result<(), 
     let (modifiers, key) = parse_key_combo(combo);
     let action = parse_action(action_str.trim());
 
-    config.keybindings.push(Keybinding { modifiers, key, action, flags });
+    config.keybindings.push(Keybinding {
+        modifiers,
+        key,
+        action,
+        flags,
+    });
     Ok(())
 }
 
@@ -401,47 +427,46 @@ fn parse_action(s: &str) -> Action {
         "workspace" => parse_workspace_action(rest.trim()),
         "splith" => Action::Split(SplitDirection::Horizontal),
         "splitv" => Action::Split(SplitDirection::Vertical),
-        "split" => {
-            match rest.trim() {
-                "h" | "horizontal" => Action::Split(SplitDirection::Horizontal),
-                "v" | "vertical" => Action::Split(SplitDirection::Vertical),
-                _ => Action::Raw(s.to_string()),
-            }
-        }
+        "split" => match rest.trim() {
+            "h" | "horizontal" => Action::Split(SplitDirection::Horizontal),
+            "v" | "vertical" => Action::Split(SplitDirection::Vertical),
+            _ => Action::Raw(s.to_string()),
+        },
         "layout" => parse_layout_action(rest.trim()),
-        "fullscreen" => {
-            match rest.trim() {
-                "enable" => Action::Fullscreen(FullscreenAction::Enable),
-                "disable" => Action::Fullscreen(FullscreenAction::Disable),
-                _ => Action::Fullscreen(FullscreenAction::Toggle),
-            }
-        }
-        "floating" => {
-            match rest.trim() {
-                "enable" => Action::Floating(FloatingAction::Enable),
-                "disable" => Action::Floating(FloatingAction::Disable),
-                "toggle" => Action::Floating(FloatingAction::Toggle),
-                _ => Action::Raw(s.to_string()),
-            }
-        }
+        "fullscreen" => match rest.trim() {
+            "enable" => Action::Fullscreen(FullscreenAction::Enable),
+            "disable" => Action::Fullscreen(FullscreenAction::Disable),
+            _ => Action::Fullscreen(FullscreenAction::Toggle),
+        },
+        "floating" => match rest.trim() {
+            "enable" => Action::Floating(FloatingAction::Enable),
+            "disable" => Action::Floating(FloatingAction::Disable),
+            "toggle" => Action::Floating(FloatingAction::Toggle),
+            _ => Action::Raw(s.to_string()),
+        },
         "resize" => parse_resize_action(rest.trim()),
         "border" => parse_border_action(rest.trim()),
         "opacity" => parse_opacity_action(rest.trim()),
-        "sticky" => {
-            match rest.trim() {
-                "enable" => Action::Sticky(StickyAction::Enable),
-                "disable" => Action::Sticky(StickyAction::Disable),
-                "toggle" => Action::Sticky(StickyAction::Toggle),
-                _ => Action::Raw(s.to_string()),
-            }
-        }
+        "sticky" => match rest.trim() {
+            "enable" => Action::Sticky(StickyAction::Enable),
+            "disable" => Action::Sticky(StickyAction::Disable),
+            "toggle" => Action::Sticky(StickyAction::Toggle),
+            _ => Action::Raw(s.to_string()),
+        },
         "mark" => {
             let name = rest.trim().trim_start_matches("--add").trim();
-            Action::Mark { name: name.to_string(), add: rest.contains("--add") }
+            Action::Mark {
+                name: name.to_string(),
+                add: rest.contains("--add"),
+            }
         }
         "unmark" => {
             let name = rest.trim();
-            Action::Unmark(if name.is_empty() { None } else { Some(name.to_string()) })
+            Action::Unmark(if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            })
         }
         "swap" => Action::SwapContainer,
         "nop" => Action::Nop(rest.trim().to_string()),
@@ -449,7 +474,11 @@ fn parse_action(s: &str) -> Action {
         "reload" => Action::Reload,
         "exit" => Action::Exit,
         "scratchpad" => {
-            if rest.trim() == "show" { Action::ScratchpadShow } else { Action::Raw(s.to_string()) }
+            if rest.trim() == "show" {
+                Action::ScratchpadShow
+            } else {
+                Action::Raw(s.to_string())
+            }
         }
         _ => Action::Raw(s.to_string()),
     }
@@ -567,11 +596,26 @@ fn parse_resize_action(rest: &str) -> Action {
     if grow_shrink == "set" {
         let parts: Vec<&str> = remainder.split_whitespace().collect();
         if parts.len() >= 2 {
-            let w = parts[0].trim_end_matches("px").trim_end_matches("ppt").parse::<i32>();
-            let h_idx = if parts.len() > 2 && (parts[1] == "px" || parts[1] == "ppt") { 2 } else { 1 };
-            let h = parts.get(h_idx).and_then(|s| s.trim_end_matches("px").trim_end_matches("ppt").parse::<i32>().ok());
+            let w = parts[0]
+                .trim_end_matches("px")
+                .trim_end_matches("ppt")
+                .parse::<i32>();
+            let h_idx = if parts.len() > 2 && (parts[1] == "px" || parts[1] == "ppt") {
+                2
+            } else {
+                1
+            };
+            let h = parts.get(h_idx).and_then(|s| {
+                s.trim_end_matches("px")
+                    .trim_end_matches("ppt")
+                    .parse::<i32>()
+                    .ok()
+            });
             if let (Ok(w), Some(h)) = (w, h) {
-                return Action::ResizeSet { width: w, height: h };
+                return Action::ResizeSet {
+                    width: w,
+                    height: h,
+                };
             }
         }
         return Action::Raw(format!("resize {rest}"));
@@ -593,7 +637,12 @@ fn parse_resize_action(rest: &str) -> Action {
 
     let remainder = remainder.trim();
     if remainder.is_empty() {
-        return Action::Resize { grow, axis, amount: 10, unit: ResizeUnit::Ppt };
+        return Action::Resize {
+            grow,
+            axis,
+            amount: 10,
+            unit: ResizeUnit::Ppt,
+        };
     }
 
     let (amount_str, unit_str) = split_first(remainder);
@@ -609,7 +658,12 @@ fn parse_resize_action(rest: &str) -> Action {
         _ => ResizeUnit::Px,
     };
 
-    Action::Resize { grow, axis, amount, unit }
+    Action::Resize {
+        grow,
+        axis,
+        amount,
+        unit,
+    }
 }
 
 fn parse_border_action(rest: &str) -> Action {
@@ -877,10 +931,17 @@ fn parse_input(rest: &str, _line_no: usize, config: &mut Config) -> Result<(), P
     }
 
     // 合并同名输入
-    if let Some(existing) = config.inputs.iter_mut().find(|i| i.identifier == identifier) {
+    if let Some(existing) = config
+        .inputs
+        .iter_mut()
+        .find(|i| i.identifier == identifier)
+    {
         existing.settings.extend(settings);
     } else {
-        config.inputs.push(InputConfig { identifier, settings });
+        config.inputs.push(InputConfig {
+            identifier,
+            settings,
+        });
     }
     Ok(())
 }
@@ -971,7 +1032,11 @@ fn parse_for_window(rest: &str, line_no: usize, config: &mut Config) -> Result<(
 
 /// 解析窗口条件，如 `app_id="firefox" title=".*"` 等
 fn parse_window_criteria(s: &str) -> WindowCriteria {
-    let mut criteria = WindowCriteria { app_id: None, class: None, title: None };
+    let mut criteria = WindowCriteria {
+        app_id: None,
+        class: None,
+        title: None,
+    };
 
     // 使用简单状态机解析 key="value" 或 key=value 对
     let mut remaining = s.trim();
@@ -986,10 +1051,18 @@ fn parse_window_criteria(s: &str) -> WindowCriteria {
         let (value, after) = if let Some(stripped) = remaining.strip_prefix('"') {
             // 带引号的值
             let end = stripped.find('"').unwrap_or(stripped.len());
-            (&stripped[..end], stripped[end..].strip_prefix('"').unwrap_or(&stripped[end..]).trim_start())
+            (
+                &stripped[..end],
+                stripped[end..]
+                    .strip_prefix('"')
+                    .unwrap_or(&stripped[end..])
+                    .trim_start(),
+            )
         } else {
             // 无引号：取到下一个空格
-            let end = remaining.find(char::is_whitespace).unwrap_or(remaining.len());
+            let end = remaining
+                .find(char::is_whitespace)
+                .unwrap_or(remaining.len());
             (&remaining[..end], remaining[end..].trim_start())
         };
 
@@ -1027,7 +1100,9 @@ fn parse_window_rule_action(s: &str, line_no: usize) -> Result<WindowRuleAction,
             if to == "to" {
                 let (ws_kw, ws_name) = split_first(ws_part.trim());
                 if ws_kw == "workspace" {
-                    return Ok(WindowRuleAction::MoveToWorkspace(ws_name.trim().to_string()));
+                    return Ok(WindowRuleAction::MoveToWorkspace(
+                        ws_name.trim().to_string(),
+                    ));
                 }
             }
             Err(ParseError::Syntax {
@@ -1134,11 +1209,7 @@ fn parse_default_floating_border(
 }
 
 /// 解析 `client.focused #border #background #text #indicator #child_border`
-fn parse_client_color(
-    keyword: &str,
-    rest: &str,
-    config: &mut Config,
-) -> Result<(), ParseError> {
+fn parse_client_color(keyword: &str, rest: &str, config: &mut Config) -> Result<(), ParseError> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
 
     if keyword == "client.background" {
@@ -1146,33 +1217,14 @@ fn parse_client_color(
         return Ok(());
     }
 
-    if parts.len() < 5 {
-        // 宽容解析：不够 5 个颜色时用空串填充
-        let get = |i: usize| parts.get(i).unwrap_or(&"").to_string();
-        let cc = ColorConfig {
-            border: get(0),
-            background: get(1),
-            text: get(2),
-            indicator: get(3),
-            child_border: get(4),
-        };
-        match keyword {
-            "client.focused" => config.client_focused = Some(cc),
-            "client.unfocused" => config.client_unfocused = Some(cc),
-            "client.focused_inactive" => config.client_focused_inactive = Some(cc),
-            "client.urgent" => config.client_urgent = Some(cc),
-            "client.placeholder" => config.client_placeholder = Some(cc),
-            _ => {}
-        }
-        return Ok(());
-    }
-
+    // 宽容解析：不够 5 个颜色时用空串填充
+    let get = |i: usize| parts.get(i).unwrap_or(&"").to_string();
     let cc = ColorConfig {
-        border: parts[0].to_string(),
-        background: parts[1].to_string(),
-        text: parts[2].to_string(),
-        indicator: parts[3].to_string(),
-        child_border: parts[4].to_string(),
+        border: get(0),
+        background: get(1),
+        text: get(2),
+        indicator: get(3),
+        child_border: get(4),
     };
 
     match keyword {
@@ -1208,7 +1260,10 @@ fn parse_assign(rest: &str, line_no: usize, config: &mut Config) -> Result<(), P
         kw.to_string()
     };
 
-    config.assigns.push(AssignRule { criteria, workspace });
+    config.assigns.push(AssignRule {
+        criteria,
+        workspace,
+    });
     Ok(())
 }
 
@@ -1238,8 +1293,14 @@ fn parse_bindcode(rest: &str, _line_no: usize, config: &mut Config) -> Result<()
     loop {
         let (tok, after) = split_first(remaining);
         match tok {
-            "--release" => { flags.release = true; remaining = after; }
-            "--locked" => { flags.locked = true; remaining = after; }
+            "--release" => {
+                flags.release = true;
+                remaining = after;
+            }
+            "--locked" => {
+                flags.locked = true;
+                remaining = after;
+            }
             _ => break,
         }
     }
@@ -1265,7 +1326,9 @@ fn parse_unbindsym(rest: &str, config: &mut Config) -> Result<(), ParseError> {
     let (combo, _) = split_first(rest);
     let (modifiers, key) = parse_key_combo(combo);
     // 从绑定列表中移除匹配的绑定
-    config.keybindings.retain(|kb| !(kb.key == key && kb.modifiers == modifiers));
+    config
+        .keybindings
+        .retain(|kb| !(kb.key == key && kb.modifiers == modifiers));
     Ok(())
 }
 
@@ -1313,7 +1376,9 @@ fn parse_block_line(line: &str, line_no: usize, ctx: &mut BlockContext, config: 
                 _ => {} // 忽略未知 bar 指令
             }
         }
-        BlockContext::Input { ref mut settings, .. } => {
+        BlockContext::Input {
+            ref mut settings, ..
+        } => {
             let (key, value) = split_first(line);
             if !key.is_empty() && !value.is_empty() {
                 settings.insert(key.to_string(), value.to_string());
@@ -1334,11 +1399,21 @@ fn finalize_block(ctx: BlockContext, config: &mut Config) {
         BlockContext::Bar(bar) => {
             config.bar = Some(bar);
         }
-        BlockContext::Input { identifier, settings } => {
-            if let Some(existing) = config.inputs.iter_mut().find(|i| i.identifier == identifier) {
+        BlockContext::Input {
+            identifier,
+            settings,
+        } => {
+            if let Some(existing) = config
+                .inputs
+                .iter_mut()
+                .find(|i| i.identifier == identifier)
+            {
                 existing.settings.extend(settings);
             } else {
-                config.inputs.push(InputConfig { identifier, settings });
+                config.inputs.push(InputConfig {
+                    identifier,
+                    settings,
+                });
             }
         }
     }
@@ -1356,10 +1431,22 @@ fn parse_bindsym_into(
     loop {
         let (tok, after) = split_first(remaining);
         match tok {
-            "--release" => { flags.release = true; remaining = after; }
-            "--locked" => { flags.locked = true; remaining = after; }
-            "--whole-window" => { flags.whole_window = true; remaining = after; }
-            "--no-repeat" => { flags.no_repeat = true; remaining = after; }
+            "--release" => {
+                flags.release = true;
+                remaining = after;
+            }
+            "--locked" => {
+                flags.locked = true;
+                remaining = after;
+            }
+            "--whole-window" => {
+                flags.whole_window = true;
+                remaining = after;
+            }
+            "--no-repeat" => {
+                flags.no_repeat = true;
+                remaining = after;
+            }
             _ => break,
         }
     }
@@ -1369,7 +1456,12 @@ fn parse_bindsym_into(
     }
     let (modifiers, key) = parse_key_combo(combo);
     let action = parse_action(action_str.trim());
-    keybindings.push(Keybinding { modifiers, key, action, flags });
+    keybindings.push(Keybinding {
+        modifiers,
+        key,
+        action,
+        flags,
+    });
     Ok(())
 }
 
@@ -1468,8 +1560,7 @@ fn strip_inline_comment(line: &str) -> &str {
                 // 只有当 '#' 前面是空白（或行首）且后面不是十六进制数字时，才当作注释。
                 // 这样可以保留 `#ffffff` 形式的颜色值。
                 let preceded_by_space = i == 0 || bytes[i - 1].is_ascii_whitespace();
-                let followed_by_hex = i + 1 < bytes.len()
-                    && bytes[i + 1].is_ascii_hexdigit();
+                let followed_by_hex = i + 1 < bytes.len() && bytes[i + 1].is_ascii_hexdigit();
                 if preceded_by_space && !followed_by_hex {
                     return line[..i].trim_end();
                 }
@@ -1592,7 +1683,10 @@ mod tests {
         // 引号内的 # 不应被视为注释
         let cfg = parse_ok!(r#"for_window [app_id="test#name"] floating enable"#);
         assert_eq!(cfg.window_rules.len(), 1);
-        assert_eq!(cfg.window_rules[0].criteria.app_id.as_deref(), Some("test#name"));
+        assert_eq!(
+            cfg.window_rules[0].criteria.app_id.as_deref(),
+            Some("test#name")
+        );
     }
 
     // ════════════════════════════════════════════════════════
@@ -1608,7 +1702,10 @@ mod tests {
     #[test]
     fn set_variable_multiword_value() {
         let cfg = parse_ok!("set $term foot --server");
-        assert_eq!(cfg.variables.get("term"), Some(&"foot --server".to_string()));
+        assert_eq!(
+            cfg.variables.get("term"),
+            Some(&"foot --server".to_string())
+        );
     }
 
     #[test]
@@ -1693,13 +1790,19 @@ mod tests {
     #[test]
     fn bindsym_workspace_number() {
         let cfg = parse_ok!("bindsym Mod4+1 workspace number 1");
-        assert_eq!(cfg.keybindings[0].action, Action::Workspace("1".to_string()));
+        assert_eq!(
+            cfg.keybindings[0].action,
+            Action::Workspace("1".to_string())
+        );
     }
 
     #[test]
     fn bindsym_workspace_named() {
         let cfg = parse_ok!("bindsym Mod4+w workspace web");
-        assert_eq!(cfg.keybindings[0].action, Action::Workspace("web".to_string()));
+        assert_eq!(
+            cfg.keybindings[0].action,
+            Action::Workspace("web".to_string())
+        );
     }
 
     #[test]
@@ -1714,43 +1817,64 @@ mod tests {
     #[test]
     fn bindsym_split_horizontal() {
         let cfg = parse_ok!("bindsym Mod4+h splith");
-        assert_eq!(cfg.keybindings[0].action, Action::Split(SplitDirection::Horizontal));
+        assert_eq!(
+            cfg.keybindings[0].action,
+            Action::Split(SplitDirection::Horizontal)
+        );
     }
 
     #[test]
     fn bindsym_split_vertical() {
         let cfg = parse_ok!("bindsym Mod4+v splitv");
-        assert_eq!(cfg.keybindings[0].action, Action::Split(SplitDirection::Vertical));
+        assert_eq!(
+            cfg.keybindings[0].action,
+            Action::Split(SplitDirection::Vertical)
+        );
     }
 
     #[test]
     fn bindsym_layout_stacking() {
         let cfg = parse_ok!("bindsym Mod4+s layout stacking");
-        assert_eq!(cfg.keybindings[0].action, Action::Layout(LayoutType::Stacked));
+        assert_eq!(
+            cfg.keybindings[0].action,
+            Action::Layout(LayoutType::Stacked)
+        );
     }
 
     #[test]
     fn bindsym_layout_tabbed() {
         let cfg = parse_ok!("bindsym Mod4+w layout tabbed");
-        assert_eq!(cfg.keybindings[0].action, Action::Layout(LayoutType::Tabbed));
+        assert_eq!(
+            cfg.keybindings[0].action,
+            Action::Layout(LayoutType::Tabbed)
+        );
     }
 
     #[test]
     fn bindsym_layout_toggle_split() {
         let cfg = parse_ok!("bindsym Mod4+e layout toggle split");
-        assert_eq!(cfg.keybindings[0].action, Action::Layout(LayoutType::Toggle));
+        assert_eq!(
+            cfg.keybindings[0].action,
+            Action::Layout(LayoutType::Toggle)
+        );
     }
 
     #[test]
     fn bindsym_fullscreen() {
         let cfg = parse_ok!("bindsym Mod4+f fullscreen");
-        assert_eq!(cfg.keybindings[0].action, Action::Fullscreen(FullscreenAction::Toggle));
+        assert_eq!(
+            cfg.keybindings[0].action,
+            Action::Fullscreen(FullscreenAction::Toggle)
+        );
     }
 
     #[test]
     fn bindsym_floating_toggle() {
         let cfg = parse_ok!("bindsym Mod4+Shift+space floating toggle");
-        assert_eq!(cfg.keybindings[0].action, Action::Floating(FloatingAction::Toggle));
+        assert_eq!(
+            cfg.keybindings[0].action,
+            Action::Floating(FloatingAction::Toggle)
+        );
     }
 
     #[test]
@@ -1910,20 +2034,29 @@ mod tests {
         let cfg = parse_ok!(r#"input "type:keyboard" xkb_layout us"#);
         assert_eq!(cfg.inputs.len(), 1);
         assert_eq!(cfg.inputs[0].identifier, "type:keyboard");
-        assert_eq!(cfg.inputs[0].settings.get("xkb_layout"), Some(&"us".to_string()));
+        assert_eq!(
+            cfg.inputs[0].settings.get("xkb_layout"),
+            Some(&"us".to_string())
+        );
     }
 
     #[test]
     fn input_pointer_accel() {
         let cfg = parse_ok!(r#"input "type:pointer" accel_profile adaptive"#);
-        assert_eq!(cfg.inputs[0].settings.get("accel_profile"), Some(&"adaptive".to_string()));
+        assert_eq!(
+            cfg.inputs[0].settings.get("accel_profile"),
+            Some(&"adaptive".to_string())
+        );
     }
 
     #[test]
     fn input_without_quotes() {
         let cfg = parse_ok!("input type:keyboard xkb_layout de");
         assert_eq!(cfg.inputs[0].identifier, "type:keyboard");
-        assert_eq!(cfg.inputs[0].settings.get("xkb_layout"), Some(&"de".to_string()));
+        assert_eq!(
+            cfg.inputs[0].settings.get("xkb_layout"),
+            Some(&"de".to_string())
+        );
     }
 
     #[test]
@@ -1931,8 +2064,14 @@ mod tests {
         let input = "input type:keyboard xkb_layout us\ninput type:keyboard xkb_variant intl";
         let cfg = parse_ok!(input);
         assert_eq!(cfg.inputs.len(), 1, "同名输入设备应合并");
-        assert_eq!(cfg.inputs[0].settings.get("xkb_layout"), Some(&"us".to_string()));
-        assert_eq!(cfg.inputs[0].settings.get("xkb_variant"), Some(&"intl".to_string()));
+        assert_eq!(
+            cfg.inputs[0].settings.get("xkb_layout"),
+            Some(&"us".to_string())
+        );
+        assert_eq!(
+            cfg.inputs[0].settings.get("xkb_variant"),
+            Some(&"intl".to_string())
+        );
     }
 
     // ════════════════════════════════════════════════════════
@@ -1984,7 +2123,13 @@ mod tests {
     #[test]
     fn gaps_both() {
         let cfg = parse_ok!("gaps inner 10\ngaps outer 5");
-        assert_eq!(cfg.gaps, GapsConfig { inner: 10, outer: 5 });
+        assert_eq!(
+            cfg.gaps,
+            GapsConfig {
+                inner: 10,
+                outer: 5
+            }
+        );
     }
 
     #[test]
@@ -2084,25 +2229,37 @@ mod tests {
         let cfg = parse_ok!(r#"for_window [class="Steam"] move to workspace 5"#);
         let rule = &cfg.window_rules[0];
         assert_eq!(rule.criteria.class.as_deref(), Some("Steam"));
-        assert_eq!(rule.action, WindowRuleAction::MoveToWorkspace("5".to_string()));
+        assert_eq!(
+            rule.action,
+            WindowRuleAction::MoveToWorkspace("5".to_string())
+        );
     }
 
     #[test]
     fn for_window_floating_disable() {
         let cfg = parse_ok!(r#"for_window [app_id="term"] floating disable"#);
-        assert_eq!(cfg.window_rules[0].action, WindowRuleAction::FloatingDisable);
+        assert_eq!(
+            cfg.window_rules[0].action,
+            WindowRuleAction::FloatingDisable
+        );
     }
 
     #[test]
     fn for_window_resize() {
         let cfg = parse_ok!(r#"for_window [app_id="dialog"] resize 800 600"#);
-        assert_eq!(cfg.window_rules[0].action, WindowRuleAction::Resize(800, 600));
+        assert_eq!(
+            cfg.window_rules[0].action,
+            WindowRuleAction::Resize(800, 600)
+        );
     }
 
     #[test]
     fn for_window_title_criteria() {
         let cfg = parse_ok!(r#"for_window [title="Firefox"] floating enable"#);
-        assert_eq!(cfg.window_rules[0].criteria.title.as_deref(), Some("Firefox"));
+        assert_eq!(
+            cfg.window_rules[0].criteria.title.as_deref(),
+            Some("Firefox")
+        );
     }
 
     #[test]
@@ -2240,7 +2397,13 @@ focus_follows_mouse yes
         assert_eq!(cfg.inputs.len(), 2);
 
         // 验证间距
-        assert_eq!(cfg.gaps, GapsConfig { inner: 10, outer: 5 });
+        assert_eq!(
+            cfg.gaps,
+            GapsConfig {
+                inner: 10,
+                outer: 5
+            }
+        );
 
         // 验证边框
         assert_eq!(cfg.default_border, BorderStyle::Pixel(2));
@@ -2366,7 +2529,10 @@ focus_follows_mouse yes
 
     #[test]
     fn strip_inline_comment_with_comment() {
-        assert_eq!(strip_inline_comment("gaps inner 10 # 这是注释"), "gaps inner 10");
+        assert_eq!(
+            strip_inline_comment("gaps inner 10 # 这是注释"),
+            "gaps inner 10"
+        );
     }
 
     #[test]
@@ -2387,7 +2553,10 @@ focus_follows_mouse yes
     fn substitute_vars_single() {
         let mut vars = HashMap::new();
         vars.insert("mod".to_string(), "Mod4".to_string());
-        assert_eq!(substitute_vars("bindsym $mod+Return exec foot", &vars), "bindsym Mod4+Return exec foot");
+        assert_eq!(
+            substitute_vars("bindsym $mod+Return exec foot", &vars),
+            "bindsym Mod4+Return exec foot"
+        );
     }
 
     #[test]
