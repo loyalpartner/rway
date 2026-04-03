@@ -100,6 +100,17 @@ fn border_elements(
         return vec![];
     }
 
+    // If any window is fullscreen, skip ALL borders
+    let has_fullscreen = state.space.elements().any(|window| {
+        window.toplevel().is_some_and(|tl| {
+            use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+            tl.with_pending_state(|s| s.states.contains(xdg_toplevel::State::Fullscreen))
+        })
+    });
+    if has_fullscreen {
+        return vec![];
+    }
+
     let focused_surface = state.seat.get_keyboard().and_then(|kb| kb.current_focus());
 
     state

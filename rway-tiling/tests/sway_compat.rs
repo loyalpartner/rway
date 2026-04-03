@@ -51,10 +51,7 @@ fn children_window_ids(tree: &Tree, container: NodeId) -> Vec<u64> {
 
 fn find_container_with_layout(tree: &Tree, node: NodeId, layout: Layout) -> Option<NodeId> {
     if let Some(n) = tree.get(node) {
-        if let NodeData::Container {
-            layout: l, ..
-        } = &n.data
-        {
+        if let NodeData::Container { layout: l, .. } = &n.data {
             if *l == layout {
                 return Some(node);
             }
@@ -142,7 +139,11 @@ fn insert_after_focused_not_at_end() {
     let container = tree.children(ws)[0];
     let ids = children_window_ids(&tree, container);
 
-    assert_eq!(ids, vec![1, 2, 4, 3], "D should be inserted after B, before C");
+    assert_eq!(
+        ids,
+        vec![1, 2, 4, 3],
+        "D should be inserted after B, before C"
+    );
 }
 
 #[test]
@@ -195,7 +196,10 @@ fn split_wraps_focused_window_immediately() {
             })
         )
     });
-    assert!(splitv.is_some(), "split v should create a SplitV container wrapping B");
+    assert!(
+        splitv.is_some(),
+        "split v should create a SplitV container wrapping B"
+    );
 }
 
 #[test]
@@ -213,8 +217,8 @@ fn split_then_insert_goes_into_new_container() {
     let top = tree.children(ws)[0]; // SplitH
 
     // Find the SplitV container
-    let splitv_id = find_container_with_layout(&tree, top, Layout::SplitV)
-        .expect("should have SplitV");
+    let splitv_id =
+        find_container_with_layout(&tree, top, Layout::SplitV).expect("should have SplitV");
     let sv_children = children_window_ids(&tree, splitv_id);
     assert_eq!(sv_children, vec![2, 3], "B and C should be in SplitV");
 }
@@ -250,9 +254,7 @@ fn build_2x2_grid() {
     assert_eq!(geoms.len(), 4, "should have 4 windows");
 
     // Get geometries by window id
-    let g = |id: u64| -> Rect {
-        geoms.iter().find(|(wid, _)| *wid == id).unwrap().1
-    };
+    let g = |id: u64| -> Rect { geoms.iter().find(|(wid, _)| *wid == id).unwrap().1 };
 
     // A should be top-left, B top-right, C bottom-left, D bottom-right
     assert!(g(1).x < g(2).x, "A should be left of B");
@@ -263,8 +265,16 @@ fn build_2x2_grid() {
     // Each window should be approximately quarter-screen
     for id in [1, 2, 3, 4] {
         let geo = g(id);
-        assert!(geo.width > 900 && geo.width < 1000, "width ~960, got {}", geo.width);
-        assert!(geo.height > 500 && geo.height < 560, "height ~540, got {}", geo.height);
+        assert!(
+            geo.width > 900 && geo.width < 1000,
+            "width ~960, got {}",
+            geo.width
+        );
+        assert!(
+            geo.height > 500 && geo.height < 560,
+            "height ~540, got {}",
+            geo.height
+        );
     }
 }
 
@@ -325,9 +335,7 @@ fn move_down_in_2x2_swaps_within_column() {
     tree.compute_layout(root, screen(), &GapsConfig::default());
     let geoms = tree.window_geometries();
 
-    let g = |id: u64| -> Rect {
-        geoms.iter().find(|(wid, _)| *wid == id).unwrap().1
-    };
+    let g = |id: u64| -> Rect { geoms.iter().find(|(wid, _)| *wid == id).unwrap().1 };
 
     assert!(g(3).y < g(1).y, "C should be above A after move down");
     // B and D should be unchanged
@@ -358,9 +366,7 @@ fn move_right_in_2x2_extracts_window() {
     tree.compute_layout(root, screen(), &GapsConfig::default());
     let geoms = tree.window_geometries();
 
-    let g = |id: u64| -> Rect {
-        geoms.iter().find(|(wid, _)| *wid == id).unwrap().1
-    };
+    let g = |id: u64| -> Rect { geoms.iter().find(|(wid, _)| *wid == id).unwrap().1 };
 
     // A should now be between C and the right column
     // C should be leftmost (took over the left column alone)
@@ -462,7 +468,10 @@ fn remove_all_windows_cleans_containers() {
     assert_eq!(tree.window_geometries().len(), 0);
     // Workspace should be empty, no orphan containers
     let ws = tree.focused_workspace().unwrap();
-    assert!(tree.children(ws).is_empty(), "workspace should be empty after removing all");
+    assert!(
+        tree.children(ws).is_empty(),
+        "workspace should be empty after removing all"
+    );
 }
 
 #[test]
@@ -487,14 +496,16 @@ fn remove_from_2x2_preserves_structure() {
 
     assert_eq!(geoms.len(), 3);
 
-    let g = |id: u64| -> Rect {
-        geoms.iter().find(|(wid, _)| *wid == id).unwrap().1
-    };
+    let g = |id: u64| -> Rect { geoms.iter().find(|(wid, _)| *wid == id).unwrap().1 };
 
     // Left column: A and C should each be half height
     assert!(g(1).y < g(3).y, "A above C");
     // Right column: B should take full height
-    assert_eq!(g(2).height, 1080, "B should take full height after D removed");
+    assert_eq!(
+        g(2).height,
+        1080,
+        "B should take full height after D removed"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -515,7 +526,10 @@ fn focus_left_right_in_tabbed() {
     assert_eq!(tree.focused_window_id(), Some(2));
 
     let moved = tree.move_focus(Direction::Left);
-    assert!(moved, "Left should navigate between tabs in Tabbed container");
+    assert!(
+        moved,
+        "Left should navigate between tabs in Tabbed container"
+    );
     assert_eq!(
         tree.focused_window_id(),
         Some(1),
@@ -524,7 +538,10 @@ fn focus_left_right_in_tabbed() {
 
     // And Right should go back
     let moved = tree.move_focus(Direction::Right);
-    assert!(moved, "Right should navigate between tabs in Tabbed container");
+    assert!(
+        moved,
+        "Right should navigate between tabs in Tabbed container"
+    );
     assert_eq!(
         tree.focused_window_id(),
         Some(2),
@@ -605,7 +622,11 @@ fn move_up_in_stacked_reorders() {
     assert!(moved, "move Up should work in Stacked container");
 
     let ids = children_window_ids(&tree, container);
-    assert_eq!(ids, vec![2, 1], "window 2 should move to index 0 in Stacked");
+    assert_eq!(
+        ids,
+        vec![2, 1],
+        "window 2 should move to index 0 in Stacked"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -643,11 +664,17 @@ fn tabbed_all_children_get_geometry() {
     }
 
     // All windows should share the same geometry (overlapping, only focused shown)
-    let g = |id: u64| -> Rect {
-        geoms.iter().find(|(wid, _)| *wid == id).unwrap().1
-    };
-    assert_eq!(g(1), g(2), "all Tabbed children should have identical geometry");
-    assert_eq!(g(2), g(3), "all Tabbed children should have identical geometry");
+    let g = |id: u64| -> Rect { geoms.iter().find(|(wid, _)| *wid == id).unwrap().1 };
+    assert_eq!(
+        g(1),
+        g(2),
+        "all Tabbed children should have identical geometry"
+    );
+    assert_eq!(
+        g(2),
+        g(3),
+        "all Tabbed children should have identical geometry"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -914,5 +941,69 @@ fn move_at_boundary_promotes_to_parent() {
     assert!(
         geoms.iter().all(|(_, r)| r.width > 0 && r.height > 0),
         "all windows should have valid geometry"
+    );
+}
+
+/// Fullscreen window should occupy the entire output area (no gaps, no borders).
+#[test]
+fn fullscreen_window_covers_entire_output() {
+    let mut tree = make_tree();
+    tree.insert_window(1);
+    tree.insert_window(2); // SplitH[W1, W2*]
+
+    // Enable fullscreen on focused window (W2)
+    assert!(tree.set_fullscreen(2, true));
+
+    let root = tree.root();
+    let s = screen();
+    tree.compute_layout(root, s, &GapsConfig::default());
+    let geoms = tree.window_geometries();
+
+    let w2 = geoms.iter().find(|(id, _)| *id == 2).unwrap().1;
+
+    // Fullscreen window must cover the entire screen
+    assert_eq!(w2.x, 0, "fullscreen x should be 0, got {}", w2.x);
+    assert_eq!(w2.y, 0, "fullscreen y should be 0, got {}", w2.y);
+    assert_eq!(
+        w2.width, s.width,
+        "fullscreen width should be {}, got {}",
+        s.width, w2.width
+    );
+    assert_eq!(
+        w2.height, s.height,
+        "fullscreen height should be {}, got {}",
+        s.height, w2.height
+    );
+}
+
+/// Toggling fullscreen off should restore the original tiled layout.
+#[test]
+fn fullscreen_toggle_restores_layout() {
+    let mut tree = make_tree();
+    tree.insert_window(1);
+    tree.insert_window(2);
+
+    let root = tree.root();
+    let s = screen();
+    let gaps = GapsConfig::default();
+
+    // Get original geometry
+    tree.compute_layout(root, s, &gaps);
+    let orig = tree.window_geometries();
+    let orig_w2 = orig.iter().find(|(id, _)| *id == 2).unwrap().1;
+
+    // Fullscreen on then off
+    tree.set_fullscreen(2, true);
+    tree.compute_layout(root, s, &gaps);
+    tree.set_fullscreen(2, false);
+    tree.compute_layout(root, s, &gaps);
+
+    let restored = tree.window_geometries();
+    let restored_w2 = restored.iter().find(|(id, _)| *id == 2).unwrap().1;
+
+    assert_eq!(
+        orig_w2, restored_w2,
+        "geometry should restore after fullscreen toggle: orig={:?} restored={:?}",
+        orig_w2, restored_w2
     );
 }

@@ -252,6 +252,7 @@ enum LayoutInfo {
     },
     Leaf {
         floating: bool,
+        fullscreen: bool,
     },
     Skip,
 }
@@ -621,7 +622,11 @@ impl Tree {
                     Direction::Left | Direction::Up => children_len.saturating_sub(1),
                 };
                 if let Some(node) = self.get_mut(wrap_id) {
-                    if let NodeData::Container { ref mut focused_child, .. } = node.data {
+                    if let NodeData::Container {
+                        ref mut focused_child,
+                        ..
+                    } = node.data
+                    {
                         *focused_child = wrap_idx;
                     }
                 }
@@ -724,13 +729,21 @@ impl Tree {
             let idx = self.children(parent_id).iter().position(|&c| c == current);
             if let Some(idx) = idx {
                 if let Some(node) = self.get_mut(parent_id) {
-                    if let NodeData::Container { ref mut focused_child, .. } = node.data {
+                    if let NodeData::Container {
+                        ref mut focused_child,
+                        ..
+                    } = node.data
+                    {
                         *focused_child = idx;
                     }
                 }
             }
             // Stop at workspace level
-            if self.get(parent_id).map(|n| matches!(n.data, NodeData::Workspace { .. })).unwrap_or(false) {
+            if self
+                .get(parent_id)
+                .map(|n| matches!(n.data, NodeData::Workspace { .. }))
+                .unwrap_or(false)
+            {
                 break;
             }
             current = parent_id;
@@ -824,10 +837,7 @@ impl Tree {
                         // Target is a leaf: simple swap
                         if let Some(node) = self.get_mut(parent_id) {
                             node.children.swap(idx, new_pos);
-                            if let NodeData::Container {
-                                ref mut sizes, ..
-                            } = node.data
-                            {
+                            if let NodeData::Container { ref mut sizes, .. } = node.data {
                                 if idx < sizes.len() && new_pos < sizes.len() {
                                     sizes.swap(idx, new_pos);
                                 }
@@ -939,8 +949,7 @@ impl Tree {
                 Some(n) => match &n.data {
                     NodeData::Container { layout, .. } => matches!(
                         (axis, layout),
-                        (ResizeAxis::Width, Layout::SplitH)
-                            | (ResizeAxis::Height, Layout::SplitV)
+                        (ResizeAxis::Width, Layout::SplitH) | (ResizeAxis::Height, Layout::SplitV)
                     ),
                     NodeData::Workspace { .. } => return false, // stop at workspace
                     _ => false,
@@ -1228,6 +1237,22 @@ impl Tree {
         false
     }
 
+    /// Check if a window is in fullscreen mode
+    pub fn is_fullscreen(&self, window_id: u64) -> bool {
+        self.find_window_by_id(window_id)
+            .and_then(|id| self.get(id))
+            .map(|n| {
+                matches!(
+                    &n.data,
+                    NodeData::Window {
+                        fullscreen: true,
+                        ..
+                    }
+                )
+            })
+            .unwrap_or(false)
+    }
+
     /// Get all marks on a window
     pub fn get_marks(&self, window_id: u64) -> Vec<String> {
         let win_node_id = match self.find_window_by_id(window_id) {
@@ -1507,12 +1532,7 @@ impl Tree {
 
     /// Insert a child node at a specific index in parent's children list.
     /// This does NOT update sizes — caller must do that.
-    fn insert_child_at(
-        &mut self,
-        parent_id: NodeId,
-        index: usize,
-        data: NodeData,
-    ) -> NodeId {
+    fn insert_child_at(&mut self, parent_id: NodeId, index: usize, data: NodeData) -> NodeId {
         // Allocate node
         let id = if let Some(reused) = self.free_list.pop() {
             reused
@@ -1708,9 +1728,9 @@ impl Tree {
         let is_parallel = matches!(
             (target_layout, direction),
             (Layout::SplitH, Direction::Left | Direction::Right)
-            | (Layout::SplitV, Direction::Up | Direction::Down)
-            | (Layout::Tabbed, Direction::Left | Direction::Right)
-            | (Layout::Stacked, Direction::Up | Direction::Down)
+                | (Layout::SplitV, Direction::Up | Direction::Down)
+                | (Layout::Tabbed, Direction::Left | Direction::Right)
+                | (Layout::Stacked, Direction::Up | Direction::Down)
         );
 
         let dest_id;
@@ -1807,6 +1827,20 @@ impl Tree {
         self.cleanup_empty_container(old_parent);
         self.focus_window(window_id);
         true
+    }
+
+    /// Walk up from a node to find the enclosing Output's geometry.
+    fn find_output_geometry(&self, node_id: NodeId) -> Option<Rect> {
+        let mut current = Some(node_id);
+        while let Some(id) = current {
+            if let Some(node) = self.get(id) {
+                if let NodeData::Output { geometry, .. } = &node.data {
+                    return Some(*geometry);
+                }
+            }
+            current = self.parent(id);
+        }
+        None
     }
 
     fn cleanup_empty_container(&mut self, node_id: NodeId) {
@@ -1926,9 +1960,11 @@ impl Tree {
         while let Some(cur) = current {
             let node = self.get(cur)?;
             let (focused, layout_opt, children_len) = match &node.data {
-                NodeData::Container { focused_child, layout, .. } => {
-                    (*focused_child, Some(*layout), node.children.len())
-                }
+                NodeData::Container {
+                    focused_child,
+                    layout,
+                    ..
+                } => (*focused_child, Some(*layout), node.children.len()),
                 NodeData::Workspace { .. } => (0, None, node.children.len()),
                 _ => return result,
             };
@@ -1936,9 +1972,9 @@ impl Tree {
                 let is_parallel = matches!(
                     (layout, direction),
                     (Layout::SplitH, Direction::Left | Direction::Right)
-                    | (Layout::SplitV, Direction::Up | Direction::Down)
-                    | (Layout::Tabbed, Direction::Left | Direction::Right)
-                    | (Layout::Stacked, Direction::Up | Direction::Down)
+                        | (Layout::SplitV, Direction::Up | Direction::Down)
+                        | (Layout::Tabbed, Direction::Left | Direction::Right)
+                        | (Layout::Stacked, Direction::Up | Direction::Down)
                 );
                 if is_parallel && children_len > 1 {
                     let at_boundary = match direction {
@@ -2093,11 +2129,7 @@ impl Tree {
                         area: inner_rect,
                     }
                 }
-                NodeData::Container {
-                    layout,
-                    sizes,
-                    ..
-                } => {
+                NodeData::Container { layout, sizes, .. } => {
                     let children: Vec<NodeId> = n.children.to_vec();
                     LayoutInfo::Split {
                         layout: *layout,
@@ -2105,8 +2137,13 @@ impl Tree {
                         children,
                     }
                 }
-                NodeData::Window { floating, .. } => LayoutInfo::Leaf {
+                NodeData::Window {
+                    floating,
+                    fullscreen,
+                    ..
+                } => LayoutInfo::Leaf {
                     floating: *floating,
+                    fullscreen: *fullscreen,
                 },
             },
             None => LayoutInfo::Skip,
@@ -2141,8 +2178,22 @@ impl Tree {
                     }
                 }
             }
-            LayoutInfo::Leaf { floating } => {
-                if !floating {
+            LayoutInfo::Leaf {
+                floating,
+                fullscreen,
+            } => {
+                if fullscreen {
+                    // Fullscreen: find the output geometry and use it directly
+                    let output_rect = self.find_output_geometry(node_id).unwrap_or(available);
+                    if let Some(node) = self.get_mut(node_id) {
+                        if let NodeData::Window {
+                            ref mut geometry, ..
+                        } = node.data
+                        {
+                            *geometry = output_rect;
+                        }
+                    }
+                } else if !floating {
                     let final_rect = shrink_rect(available, gaps.inner / 2);
                     if let Some(node) = self.get_mut(node_id) {
                         if let NodeData::Window {
@@ -2752,7 +2803,11 @@ mod tests {
         let ws = tree.focused_workspace().unwrap();
         let container = tree.children(ws)[0];
         let top_children = tree.children(container);
-        assert_eq!(top_children.len(), 3, "top container should have 3 children");
+        assert_eq!(
+            top_children.len(),
+            3,
+            "top container should have 3 children"
+        );
 
         // The middle child (index 1) should be the SplitV sub-container
         let middle = top_children[1];
@@ -2795,33 +2850,45 @@ mod tests {
         let mut tree = make_ws_tree();
         tree.insert_window(1); // A
         tree.insert_window_with_layout(2, Layout::SplitV); // wrap: SplitV[A, B]
-        // Hmm, this creates SplitH[SplitV[A,B]] — not what we want.
-        // We need: SplitH[ SplitV[A,C], SplitV[B,D] ]
+                                                           // Hmm, this creates SplitH[SplitV[A,B]] — not what we want.
+                                                           // We need: SplitH[ SplitV[A,C], SplitV[B,D] ]
 
         // Build manually:
         let mut tree = Tree::new();
         let root = tree.root();
         let out = tree.add_node(root, output_data("eDP-1"));
-        let ws = tree.add_node(out, NodeData::Workspace {
-            name: "1".into(),
-            output: out,
-            is_visible: true,
-        });
-        let splith = tree.add_node(ws, NodeData::Container {
-            layout: Layout::SplitH,
-            sizes: vec![1.0, 1.0],
-            focused_child: 0,
-        });
-        let col1 = tree.add_node(splith, NodeData::Container {
-            layout: Layout::SplitV,
-            sizes: vec![1.0, 1.0],
-            focused_child: 0, // focus on A
-        });
-        let col2 = tree.add_node(splith, NodeData::Container {
-            layout: Layout::SplitV,
-            sizes: vec![1.0, 1.0],
-            focused_child: 0,
-        });
+        let ws = tree.add_node(
+            out,
+            NodeData::Workspace {
+                name: "1".into(),
+                output: out,
+                is_visible: true,
+            },
+        );
+        let splith = tree.add_node(
+            ws,
+            NodeData::Container {
+                layout: Layout::SplitH,
+                sizes: vec![1.0, 1.0],
+                focused_child: 0,
+            },
+        );
+        let col1 = tree.add_node(
+            splith,
+            NodeData::Container {
+                layout: Layout::SplitV,
+                sizes: vec![1.0, 1.0],
+                focused_child: 0, // focus on A
+            },
+        );
+        let col2 = tree.add_node(
+            splith,
+            NodeData::Container {
+                layout: Layout::SplitV,
+                sizes: vec![1.0, 1.0],
+                focused_child: 0,
+            },
+        );
         let a = tree.add_node(col1, window_data(1)); // A
         let c = tree.add_node(col1, window_data(3)); // C
         let b = tree.add_node(col2, window_data(2)); // B
@@ -2852,18 +2919,38 @@ mod tests {
         let mut tree = Tree::new();
         let root = tree.root();
         let out = tree.add_node(root, output_data("eDP-1"));
-        let ws = tree.add_node(out, NodeData::Workspace {
-            name: "1".into(), output: out, is_visible: true,
-        });
-        let splith = tree.add_node(ws, NodeData::Container {
-            layout: Layout::SplitH, sizes: vec![1.0, 1.0], focused_child: 0,
-        });
-        let col1 = tree.add_node(splith, NodeData::Container {
-            layout: Layout::SplitV, sizes: vec![1.0, 1.0], focused_child: 0,
-        });
-        let col2 = tree.add_node(splith, NodeData::Container {
-            layout: Layout::SplitV, sizes: vec![1.0, 1.0], focused_child: 0,
-        });
+        let ws = tree.add_node(
+            out,
+            NodeData::Workspace {
+                name: "1".into(),
+                output: out,
+                is_visible: true,
+            },
+        );
+        let splith = tree.add_node(
+            ws,
+            NodeData::Container {
+                layout: Layout::SplitH,
+                sizes: vec![1.0, 1.0],
+                focused_child: 0,
+            },
+        );
+        let col1 = tree.add_node(
+            splith,
+            NodeData::Container {
+                layout: Layout::SplitV,
+                sizes: vec![1.0, 1.0],
+                focused_child: 0,
+            },
+        );
+        let col2 = tree.add_node(
+            splith,
+            NodeData::Container {
+                layout: Layout::SplitV,
+                sizes: vec![1.0, 1.0],
+                focused_child: 0,
+            },
+        );
         let a = tree.add_node(col1, window_data(1)); // A
         tree.add_node(col1, window_data(3)); // C
         tree.add_node(col2, window_data(2)); // B
@@ -2875,14 +2962,25 @@ mod tests {
 
         // SplitH should now have 3 children: [col1(only C), A, col2(B,D)]
         let h_children = tree.children(splith);
-        assert_eq!(h_children.len(), 3, "splith should have 3 children after cross-container move");
+        assert_eq!(
+            h_children.len(),
+            3,
+            "splith should have 3 children after cross-container move"
+        );
         assert_eq!(h_children[0], col1, "col1 should still be first");
-        assert_eq!(h_children[1], a, "A should be extracted between col1 and col2");
+        assert_eq!(
+            h_children[1], a,
+            "A should be extracted between col1 and col2"
+        );
         assert_eq!(h_children[2], col2, "col2 should still be last");
 
         // col1 should only have C now
         let col1_children = tree.children(col1);
-        assert_eq!(col1_children.len(), 1, "col1 should have only C after A was extracted");
+        assert_eq!(
+            col1_children.len(),
+            1,
+            "col1 should have only C after A was extracted"
+        );
     }
 
     #[test]

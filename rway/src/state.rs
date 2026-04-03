@@ -87,6 +87,11 @@ pub struct RwayState {
     // Redraw scheduling — set to true when content changes, cleared after rendering
     pub(crate) needs_redraw: bool,
 
+    // Winit backend state (None when using udev backend)
+    pub(crate) winit: Option<crate::backend::winit::WinitState>,
+    // Ping to trigger a render frame (winit backend only)
+    pub(crate) render_ping: Option<smithay::reexports::calloop::ping::Ping>,
+
     // IPC
     pub(crate) ipc_server: Option<rway_ipc::IpcServer>,
 
@@ -208,6 +213,8 @@ impl RwayState {
 
             config,
             needs_redraw: true,
+            winit: None,
+            render_ping: None,
             ipc_server,
 
             #[cfg(feature = "xwayland")]
@@ -245,10 +252,13 @@ impl RwayState {
         }
     }
 
-    /// Mark content as changed. The winit backend's continuous render
-    /// loop will pick this up on the next frame (~16ms max).
+    /// Mark content as changed. The winit ping cycle picks this up
+    /// on the next frame. For udev, VBlank-driven.
     pub fn schedule_redraw(&mut self) {
         self.needs_redraw = true;
+        if let Some(ping) = &self.render_ping {
+            ping.ping();
+        }
     }
 
     /// 重新计算平铺布局并更新 Space 中窗口的位置和大小
@@ -281,28 +291,67 @@ impl RwayState {
 
         // 获取所有窗口的几何并设置动画目标
         let geometries = layout::get_window_geometries(&self.tiling);
+        let mut fullscreen_window: Option<(u64, Window)> = None;
+
         for (window_id, rect) in geometries {
+            let is_fs = self.tiling.is_fullscreen(window_id);
+
             // Animation target = full container rect (including border area)
             self.animations
                 .set_target(window_id, rect.x, rect.y, rect.width, rect.height);
 
             if let Some(window) = self.window_map.get(&window_id) {
-                // Window surface size = container size minus borders on each side
-                let content_w = (rect.width - 2 * bw).max(1);
-                let content_h = (rect.height - 2 * bw).max(1);
+                // Fullscreen: no borders, full output size, set xdg state
+                // Normal: inset by border width on each side
+                let (content_w, content_h, map_bw) = if is_fs {
+                    (rect.width.max(1), rect.height.max(1), 0)
+                } else {
+                    (
+                        (rect.width - 2 * bw).max(1),
+                        (rect.height - 2 * bw).max(1),
+                        bw,
+                    )
+                };
+
                 if let Some(toplevel) = window.toplevel() {
+                    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
                     toplevel.with_pending_state(|state| {
                         state.size = Some((content_w, content_h).into());
+                        if is_fs {
+                            state.states.set(xdg_toplevel::State::Fullscreen);
+                        } else {
+                            state.states.unset(xdg_toplevel::State::Fullscreen);
+                        }
                     });
                     toplevel.send_pending_configure();
                 }
-                // Map at inset position (animation position + border_width)
+
                 if let Some((x, y, _w, _h)) = self.animations.get_position(window_id) {
                     self.space
-                        .map_element(window.clone(), (x + bw, y + bw), false);
+                        .map_element(window.clone(), (x + map_bw, y + map_bw), false);
+                }
+
+                if is_fs {
+                    fullscreen_window = Some((window_id, window.clone()));
                 }
             }
         }
+
+        // Fullscreen window must be raised AFTER all other windows are mapped,
+        // so it's on top of everything. Also restore keyboard focus.
+        if let Some((_wid, ref fs_win)) = fullscreen_window {
+            self.space.raise_element(fs_win, true);
+            if let Some(wl_surface) = fs_win.toplevel().map(|t| t.wl_surface().clone()) {
+                let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                if let Some(keyboard) = self.seat.get_keyboard() {
+                    keyboard.set_focus(self, Some(wl_surface), serial);
+                }
+            }
+        }
+
+        // Flush configure events to clients immediately so they can
+        // start redrawing (e.g. fullscreen size change).
+        let _ = self.display_handle.flush_clients();
 
         // Layout changed — schedule redraw
         self.schedule_redraw();
@@ -378,12 +427,24 @@ impl RwayState {
         let has_active = self.animations.tick();
         let bw = self.border_width();
 
-        // Apply interpolated positions to Space (inset by border_width)
+        // Apply interpolated positions to Space.
+        // Fullscreen windows: no border offset, raise to top.
+        // Normal windows: inset by border_width.
+        let mut fs_win: Option<Window> = None;
         for (&window_id, window) in &self.window_map {
             if let Some((x, y, _w, _h)) = self.animations.get_position(window_id) {
+                let is_fs = self.tiling.is_fullscreen(window_id);
+                let offset = if is_fs { 0 } else { bw };
                 self.space
-                    .map_element(window.clone(), (x + bw, y + bw), false);
+                    .map_element(window.clone(), (x + offset, y + offset), false);
+                if is_fs {
+                    fs_win = Some(window.clone());
+                }
             }
+        }
+        // Ensure fullscreen window stays on top after all map_element calls
+        if let Some(ref w) = fs_win {
+            self.space.raise_element(w, true);
         }
 
         has_active

@@ -60,6 +60,10 @@ impl XdgShellHandler for RwayState {
         if let Some(keyboard) = self.seat.get_keyboard() {
             keyboard.set_focus(self, Some(wl_surface), serial);
         }
+
+        // Flush immediately so the client receives the configure event
+        // without waiting for the next render frame.
+        let _ = self.display_handle.flush_clients();
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
