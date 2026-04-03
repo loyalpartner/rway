@@ -2,17 +2,52 @@
 //
 // 处理 swaymsg/waybar 的 IPC 请求，从合成器状态生成响应。
 
+use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 
 use smithay::reexports::calloop::LoopHandle;
 
 use rway_ipc::{
-    protocol::{self, HEADER_SIZE},
+    events::SubscriptionType,
+    protocol::{self, EventType, HEADER_SIZE},
     IpcMode, IpcRect, OutputInfo, TreeNode, VersionInfo, WorkspaceInfo,
 };
 
 use crate::state::RwayState;
+
+/// A client that has subscribed to IPC events via the Subscribe command.
+/// The connection is kept open and events are pushed asynchronously.
+pub(crate) struct IpcSubscriber {
+    pub stream: UnixStream,
+    pub subscriptions: HashSet<SubscriptionType>,
+}
+
+impl IpcSubscriber {
+    /// Send an event to this subscriber if it matches their subscriptions.
+    /// Returns false if the write failed (connection dead).
+    pub fn send_event(&mut self, event_type: EventType, payload: &[u8]) -> bool {
+        let sub_type = match event_type {
+            EventType::Workspace => SubscriptionType::Workspace,
+            EventType::Output => SubscriptionType::Output,
+            EventType::Mode => SubscriptionType::Mode,
+            EventType::Window => SubscriptionType::Window,
+            EventType::BarConfigUpdate => SubscriptionType::BarConfigUpdate,
+            EventType::Binding => SubscriptionType::Binding,
+            EventType::Shutdown => SubscriptionType::Shutdown,
+            EventType::Tick => SubscriptionType::Tick,
+            EventType::BarStateUpdate => SubscriptionType::BarStateUpdate,
+            EventType::Input => SubscriptionType::Input,
+        };
+
+        if !self.subscriptions.contains(&sub_type) {
+            return true; // Not subscribed, but connection is still alive
+        }
+
+        let msg = protocol::encode_message(event_type as u32, payload);
+        self.stream.write_all(&msg).is_ok()
+    }
+}
 
 /// Register the IPC server with the calloop event loop
 pub(crate) fn register_ipc_source(handle: &LoopHandle<'static, RwayState>) {
@@ -40,17 +75,25 @@ fn poll_ipc_connections(state: &mut RwayState) {
         None => return,
     };
 
-    // 处理所有等待的连接
-    while let Some(mut stream) = server.try_accept() {
-        // 设置读超时以避免阻塞事件循环
+    // Accept all pending connections
+    let mut new_streams: Vec<UnixStream> = Vec::new();
+    while let Some(stream) = server.try_accept() {
+        new_streams.push(stream);
+    }
+
+    for mut stream in new_streams {
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(100)));
         handle_ipc_client(&mut stream, state);
     }
+
+    // Clean up dead subscribers
+    state
+        .ipc_subscribers
+        .retain(|sub| sub.stream.peer_addr().is_ok());
 }
 
 /// 处理单个 IPC 客户端连接
-fn handle_ipc_client(stream: &mut UnixStream, state: &RwayState) {
-    // 读取消息头
+fn handle_ipc_client(stream: &mut UnixStream, state: &mut RwayState) {
     let mut header_buf = [0u8; HEADER_SIZE];
     if stream.read_exact(&mut header_buf).is_err() {
         return;
@@ -59,14 +102,13 @@ fn handle_ipc_client(stream: &mut UnixStream, state: &RwayState) {
     let (payload_len, msg_type) = match protocol::decode_header(&header_buf) {
         Ok(v) => v,
         Err(e) => {
-            tracing::warn!("IPC 消息头解析失败: {}", e);
+            tracing::warn!("IPC header parse error: {}", e);
             return;
         }
     };
 
-    // 读取 payload（限制最大 1MB）
     if payload_len > 1_048_576 {
-        tracing::warn!("IPC payload 过大: {} bytes", payload_len);
+        tracing::warn!("IPC payload too large: {} bytes", payload_len);
         return;
     }
     let mut payload = vec![0u8; payload_len as usize];
@@ -74,11 +116,111 @@ fn handle_ipc_client(stream: &mut UnixStream, state: &RwayState) {
         return;
     }
 
-    tracing::debug!("IPC 请求: type={} payload_len={}", msg_type, payload_len);
+    tracing::debug!("IPC request: type={} payload_len={}", msg_type, payload_len);
 
-    // 分发处理并写回响应
+    // Subscribe (msg_type 2): keep connection open, store as subscriber
+    if msg_type == 2 {
+        let payload_str = String::from_utf8_lossy(&payload);
+        let subs = rway_ipc::parse_subscribe_payload(&payload_str).unwrap_or_default();
+        tracing::info!("IPC subscribe: {:?}", subs);
+
+        // Send success response
+        let reply = protocol::encode_message(2, b"{\"success\":true}");
+        let _ = stream.write_all(&reply);
+
+        // Clone stream and store as subscriber (original stream stays open)
+        if let Ok(cloned) = stream.try_clone() {
+            let _ = cloned.set_nonblocking(true);
+            state.ipc_subscribers.push(IpcSubscriber {
+                stream: cloned,
+                subscriptions: subs.into_iter().collect(),
+            });
+        }
+        return;
+    }
+
     let response = dispatch_ipc_message(state, msg_type, &payload);
     let _ = stream.write_all(&response);
+}
+
+/// Broadcast an event to all subscribers with matching subscriptions.
+/// Removes dead connections automatically.
+pub(crate) fn broadcast_event(state: &mut RwayState, event_type: EventType, payload: &[u8]) {
+    state
+        .ipc_subscribers
+        .retain_mut(|sub| sub.send_event(event_type, payload));
+}
+
+/// Broadcast a workspace focus event to IPC subscribers.
+pub(crate) fn broadcast_workspace_focus(state: &mut RwayState) {
+    if state.ipc_subscribers.is_empty() {
+        return;
+    }
+
+    let workspaces = rway_tiling::workspace::get_workspaces(&state.tiling);
+    let current = workspaces
+        .iter()
+        .find(|(_, _, vis)| *vis)
+        .map(|(_, name, _)| {
+            let rect = output_rect(state);
+            WorkspaceInfo {
+                id: 1,
+                num: name.parse::<i32>().unwrap_or(1),
+                name: name.clone(),
+                visible: true,
+                focused: true,
+                urgent: false,
+                output: "winit".to_string(),
+                rect,
+            }
+        });
+
+    let event = rway_ipc::WorkspaceEvent {
+        change: "focus".to_string(),
+        current,
+        old: None,
+    };
+    let payload = serde_json::to_vec(&event).unwrap_or_default();
+    broadcast_event(state, EventType::Workspace, &payload);
+}
+
+/// Broadcast a window event (new, close, focus) to IPC subscribers.
+pub(crate) fn broadcast_window_event(state: &mut RwayState, change: &str) {
+    if state.ipc_subscribers.is_empty() {
+        return;
+    }
+
+    // Build a minimal container node for the focused window
+    let focused_id = state.tiling.focused_window_id().unwrap_or(0);
+    let container = TreeNode {
+        id: focused_id as i64,
+        name: None,
+        node_type: "con".to_string(),
+        layout: "none".to_string(),
+        focused: true,
+        urgent: false,
+        rect: IpcRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
+        window_rect: zero_rect(),
+        deco_rect: zero_rect(),
+        geometry: zero_rect(),
+        nodes: vec![],
+        floating_nodes: vec![],
+        focus: vec![],
+        app_id: None,
+        window: None,
+    };
+
+    let event = rway_ipc::WindowEvent {
+        change: change.to_string(),
+        container,
+    };
+    let payload = serde_json::to_vec(&event).unwrap_or_default();
+    broadcast_event(state, EventType::Window, &payload);
 }
 
 /// 根据消息类型分发并生成响应

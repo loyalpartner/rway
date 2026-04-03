@@ -61,6 +61,8 @@ impl XdgShellHandler for RwayState {
             keyboard.set_focus(self, Some(wl_surface), serial);
         }
 
+        crate::ipc::broadcast_window_event(self, "new");
+
         // Flush immediately so the client receives the configure event
         // without waiting for the next render frame.
         let _ = self.display_handle.flush_clients();

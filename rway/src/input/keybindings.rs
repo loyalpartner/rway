@@ -39,9 +39,9 @@ pub(crate) fn execute_action(state: &mut RwayState, action: &Action) {
         Action::Focus(dir) => {
             let direction = config_dir_to_tiling(dir);
             rway_tiling::commands::move_focus(&mut state.tiling, direction);
-            // Tabbed/Stacked: relayout to show/hide the correct tab
             state.relayout();
             update_keyboard_focus(state);
+            crate::ipc::broadcast_window_event(state, "focus");
         }
         Action::Move(dir) => {
             let direction = config_dir_to_tiling(dir);
@@ -50,7 +50,6 @@ pub(crate) fn execute_action(state: &mut RwayState, action: &Action) {
             update_keyboard_focus(state);
         }
         Action::Workspace(name) => {
-            // 如果目标工作区不存在，先在当前输出上创建
             if !rway_tiling::workspace::switch_workspace(&mut state.tiling, name) {
                 if let Some(output_id) = state.output_node {
                     rway_tiling::workspace::add_workspace(&mut state.tiling, output_id, name);
@@ -59,6 +58,7 @@ pub(crate) fn execute_action(state: &mut RwayState, action: &Action) {
             }
             state.relayout();
             update_keyboard_focus(state);
+            crate::ipc::broadcast_workspace_focus(state);
         }
         Action::MoveToWorkspace(name) => {
             // 如果目标工作区不存在，先创建
