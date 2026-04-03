@@ -1007,3 +1007,85 @@ fn fullscreen_toggle_restores_layout() {
         orig_w2, restored_w2
     );
 }
+
+/// Floating window should not participate in tiling layout.
+/// Remaining tiled windows should fill the entire space.
+#[test]
+fn floating_window_excluded_from_tiling() {
+    let mut tree = make_tree();
+    tree.insert_window(1);
+    tree.insert_window(2); // SplitH[W1, W2*]
+
+    // Compute layout first so windows have valid geometry
+    let root = tree.root();
+    let s = screen();
+    tree.compute_layout(root, s, &GapsConfig::default());
+
+    // Toggle W2 to floating
+    tree.toggle_floating(2);
+
+    let root = tree.root();
+    let s = screen();
+    tree.compute_layout(root, s, &GapsConfig::default());
+    let geoms = tree.window_geometries();
+
+    // W1 should now occupy the full screen (W2 is floating, not tiled)
+    let w1 = geoms.iter().find(|(id, _)| *id == 1).unwrap().1;
+    assert_eq!(
+        w1.width, s.width,
+        "W1 should fill full width when W2 is floating: w1={:?}",
+        w1
+    );
+
+    // Sway defaults: 50% width, 75% height, centered
+    let w2 = geoms.iter().find(|(id, _)| *id == 2).unwrap().1;
+    let expected_w = s.width / 2;
+    let expected_h = s.height * 3 / 4;
+    assert_eq!(
+        w2.width, expected_w,
+        "floating W2 width should be 50% of screen: got {} expected {}",
+        w2.width, expected_w
+    );
+    assert_eq!(
+        w2.height, expected_h,
+        "floating W2 height should be 75% of screen: got {} expected {}",
+        w2.height, expected_h
+    );
+    let expected_x = (s.width - expected_w) / 2;
+    let expected_y = (s.height - expected_h) / 2;
+    assert_eq!(w2.x, expected_x, "floating W2 should be centered x");
+    assert_eq!(w2.y, expected_y, "floating W2 should be centered y");
+}
+
+/// Toggle floating off should restore tiling layout.
+#[test]
+fn floating_toggle_restores_tiling() {
+    let mut tree = make_tree();
+    tree.insert_window(1);
+    tree.insert_window(2);
+
+    let root = tree.root();
+    let s = screen();
+    let gaps = GapsConfig::default();
+
+    // Get original tiled geometry
+    tree.compute_layout(root, s, &gaps);
+    let orig = tree.window_geometries();
+    let orig_w1 = orig.iter().find(|(id, _)| *id == 1).unwrap().1;
+
+    // Float then unfloat
+    tree.toggle_floating(2);
+    tree.compute_layout(root, s, &gaps);
+    tree.toggle_floating(2);
+    tree.compute_layout(root, s, &gaps);
+
+    let restored = tree.window_geometries();
+    let restored_w1 = restored.iter().find(|(id, _)| *id == 1).unwrap().1;
+
+    // W1 should be back to its original half-screen size
+    assert_eq!(
+        orig_w1.width, restored_w1.width,
+        "W1 width should restore: orig={} restored={}",
+        orig_w1.width, restored_w1.width
+    );
+}

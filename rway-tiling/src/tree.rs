@@ -686,7 +686,10 @@ impl Tree {
         self.wrap_leaf_in_container(parent_id, leaf_id, child_index, layout);
     }
 
-    /// Toggle the floating state of a window
+    /// Toggle the floating state of a window.
+    /// Entering floating: save tiled geometry, reset geometry so
+    /// set_floating_geometry assigns Sway defaults (50%×75% centered).
+    /// Leaving floating: restore geometry=0 so tiling recalculates.
     pub fn toggle_floating(&mut self, window_id: u64) -> bool {
         let win_node_id = match self.find_window_by_id(window_id) {
             Some(id) => id,
@@ -694,9 +697,22 @@ impl Tree {
         };
         if let Some(node) = self.get_mut(win_node_id) {
             if let NodeData::Window {
-                ref mut floating, ..
+                ref mut floating,
+                ref mut saved_geometry,
+                ref mut geometry,
+                ..
             } = node.data
             {
+                if !*floating {
+                    // Entering floating: save tiled geometry, clear current
+                    // so set_floating_geometry assigns Sway default size
+                    *saved_geometry = Some(*geometry);
+                    *geometry = Rect::new(0, 0, 0, 0);
+                } else {
+                    // Leaving floating: clear so tiling recalculates
+                    *saved_geometry = None;
+                    *geometry = Rect::new(0, 0, 0, 0);
+                }
                 *floating = !*floating;
                 return true;
             }
@@ -1235,6 +1251,14 @@ impl Tree {
             }
         }
         false
+    }
+
+    /// Check if a window is floating
+    pub fn is_floating(&self, window_id: u64) -> bool {
+        self.find_window_by_id(window_id)
+            .and_then(|id| self.get(id))
+            .map(|n| matches!(&n.data, NodeData::Window { floating: true, .. }))
+            .unwrap_or(false)
     }
 
     /// Check if a window is in fullscreen mode
@@ -1829,6 +1853,36 @@ impl Tree {
         true
     }
 
+    /// Set floating window geometry: Sway defaults to 50% workspace
+    /// width × 75% workspace height, centered on the workspace.
+    /// If the window already has a valid floating geometry (e.g. from
+    /// a previous float), keep it.
+    fn set_floating_geometry(&mut self, node_id: NodeId, available: Rect) {
+        let Some(node) = self.get_mut(node_id) else {
+            return;
+        };
+        if let NodeData::Window {
+            ref mut geometry,
+            floating,
+            ..
+        } = node.data
+        {
+            if !floating {
+                return;
+            }
+            // Already has a valid floating geometry (e.g. user moved/resized it)
+            if geometry.width > 0 && geometry.height > 0 {
+                return;
+            }
+            // Sway default: 50% width, 75% height, centered
+            let w = available.width / 2;
+            let h = available.height * 3 / 4;
+            let x = available.x + (available.width - w) / 2;
+            let y = available.y + (available.height - h) / 2;
+            *geometry = Rect::new(x, y, w, h);
+        }
+    }
+
     /// Walk up from a node to find the enclosing Output's geometry.
     fn find_output_geometry(&self, node_id: NodeId) -> Option<Rect> {
         let mut current = Some(node_id);
@@ -2163,16 +2217,38 @@ impl Tree {
                 if children.is_empty() {
                     return;
                 }
+
+                // Separate tiled vs floating children. Floating children
+                // keep their geometry and are skipped in tiling layout.
+                let mut tiled_children = Vec::new();
+                let mut tiled_sizes = Vec::new();
+                for (i, &child) in children.iter().enumerate() {
+                    let is_floating = self
+                        .get(child)
+                        .map(|n| matches!(&n.data, NodeData::Window { floating: true, .. }))
+                        .unwrap_or(false);
+                    if is_floating {
+                        // Set floating geometry to saved_geometry or a centered default
+                        self.set_floating_geometry(child, available);
+                    } else {
+                        tiled_children.push(child);
+                        tiled_sizes.push(sizes.get(i).copied().unwrap_or(1.0));
+                    }
+                }
+
+                if tiled_children.is_empty() {
+                    return;
+                }
+
                 match layout {
                     Layout::SplitH => {
-                        self.layout_split_h(&children, &sizes, available, gaps);
+                        self.layout_split_h(&tiled_children, &tiled_sizes, available, gaps);
                     }
                     Layout::SplitV => {
-                        self.layout_split_v(&children, &sizes, available, gaps);
+                        self.layout_split_v(&tiled_children, &tiled_sizes, available, gaps);
                     }
                     Layout::Tabbed | Layout::Stacked => {
-                        // All children get the same area (only focused one is displayed)
-                        for &child in &children {
+                        for &child in &tiled_children {
                             self.compute_layout(child, available, gaps);
                         }
                     }

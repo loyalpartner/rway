@@ -2,6 +2,7 @@
 
 pub mod compositor;
 pub mod decoration;
+pub mod input_method;
 pub mod layer_shell;
 pub mod output;
 pub mod xdg_shell;
@@ -23,7 +24,10 @@ use smithay::wayland::selection::data_device::{
     ServerDndGrabHandler,
 };
 use smithay::wayland::selection::SelectionHandler;
-use smithay::{delegate_data_device, delegate_output, delegate_seat};
+use smithay::{
+    delegate_data_device, delegate_input_method_manager, delegate_output, delegate_seat,
+    delegate_text_input_manager, delegate_virtual_keyboard_manager,
+};
 
 impl SeatHandler for RwayState {
     type KeyboardFocus = WlSurface;
@@ -50,6 +54,14 @@ impl SeatHandler for RwayState {
 }
 
 delegate_seat!(RwayState);
+
+//
+// Input Method (IME) protocols
+//
+
+delegate_text_input_manager!(RwayState);
+delegate_input_method_manager!(RwayState);
+delegate_virtual_keyboard_manager!(RwayState);
 
 //
 // Wl Data Device（剪贴板与拖拽）

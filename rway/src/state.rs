@@ -19,6 +19,7 @@ use smithay::{
     utils::{Logical, Point},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
+        input_method::InputMethodManagerState,
         output::OutputManagerState,
         selection::data_device::DataDeviceState,
         shell::{
@@ -27,6 +28,8 @@ use smithay::{
         },
         shm::ShmState,
         socket::ListeningSocketSource,
+        text_input::TextInputManagerState,
+        virtual_keyboard::VirtualKeyboardManagerState,
     },
 };
 
@@ -65,6 +68,15 @@ pub struct RwayState {
     pub(crate) xdg_decoration_state: XdgDecorationState,
     pub(crate) popups: PopupManager,
     pub(crate) seat: Seat<Self>,
+
+    // Input method (IME) protocol state
+    // Kept alive for protocol side effects; not read directly.
+    #[allow(dead_code)]
+    pub(crate) text_input_manager_state: TextInputManagerState,
+    #[allow(dead_code)]
+    pub(crate) input_method_manager_state: InputMethodManagerState,
+    #[allow(dead_code)]
+    pub(crate) virtual_keyboard_manager_state: VirtualKeyboardManagerState,
 
     // Tiling engine
     pub(crate) tiling: Tree,
@@ -142,6 +154,13 @@ impl RwayState {
         // XDG Decoration 协议（告知客户端由合成器处理装饰）
         let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
 
+        // Input method (IME) protocols: text-input, input-method, virtual-keyboard
+        let text_input_manager_state = TextInputManagerState::new::<Self>(&dh);
+        let input_method_manager_state =
+            InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
+        let virtual_keyboard_manager_state =
+            VirtualKeyboardManagerState::new::<Self, _>(&dh, |_client| true);
+
         // Seat：键盘、指针、触摸设备的逻辑组合
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, seat_name);
@@ -199,6 +218,10 @@ impl RwayState {
             xdg_decoration_state,
             popups,
             seat,
+
+            text_input_manager_state,
+            input_method_manager_state,
+            virtual_keyboard_manager_state,
 
             tiling,
             window_map: HashMap::new(),
@@ -291,27 +314,22 @@ impl RwayState {
 
         // 获取所有窗口的几何并设置动画目标
         let geometries = layout::get_window_geometries(&self.tiling);
-        let mut fullscreen_window: Option<(u64, Window)> = None;
+        let mut raised_windows: Vec<Window> = Vec::new();
 
         for (window_id, rect) in geometries {
             let is_fs = self.tiling.is_fullscreen(window_id);
+            let is_float = self.tiling.is_floating(window_id);
+            let is_special = is_fs || is_float;
 
-            // Animation target = full container rect (including border area)
             self.animations
                 .set_target(window_id, rect.x, rect.y, rect.width, rect.height);
 
             if let Some(window) = self.window_map.get(&window_id) {
-                // Fullscreen: no borders, full output size, set xdg state
-                // Normal: inset by border width on each side
-                let (content_w, content_h, map_bw) = if is_fs {
-                    (rect.width.max(1), rect.height.max(1), 0)
-                } else {
-                    (
-                        (rect.width - 2 * bw).max(1),
-                        (rect.height - 2 * bw).max(1),
-                        bw,
-                    )
-                };
+                // Fullscreen/floating: no tiling border offset
+                // Normal tiled: inset by border_width on each side
+                let map_bw = if is_special { 0 } else { bw };
+                let content_w = (rect.width - 2 * map_bw).max(1);
+                let content_h = (rect.height - 2 * map_bw).max(1);
 
                 if let Some(toplevel) = window.toplevel() {
                     use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
@@ -331,22 +349,17 @@ impl RwayState {
                         .map_element(window.clone(), (x + map_bw, y + map_bw), false);
                 }
 
-                if is_fs {
-                    fullscreen_window = Some((window_id, window.clone()));
+                // Floating and fullscreen windows are raised above tiled
+                if is_special {
+                    raised_windows.push(window.clone());
                 }
             }
         }
 
-        // Fullscreen window must be raised AFTER all other windows are mapped,
-        // so it's on top of everything. Also restore keyboard focus.
-        if let Some((_wid, ref fs_win)) = fullscreen_window {
-            self.space.raise_element(fs_win, true);
-            if let Some(wl_surface) = fs_win.toplevel().map(|t| t.wl_surface().clone()) {
-                let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                if let Some(keyboard) = self.seat.get_keyboard() {
-                    keyboard.set_focus(self, Some(wl_surface), serial);
-                }
-            }
+        // Raise floating/fullscreen AFTER all tiled windows are mapped.
+        // Fullscreen on top of floating on top of tiled.
+        for w in &raised_windows {
+            self.space.raise_element(w, true);
         }
 
         // Flush configure events to clients immediately so they can
@@ -428,22 +441,22 @@ impl RwayState {
         let bw = self.border_width();
 
         // Apply interpolated positions to Space.
-        // Fullscreen windows: no border offset, raise to top.
-        // Normal windows: inset by border_width.
-        let mut fs_win: Option<Window> = None;
+        // Floating/fullscreen: no border offset, raise to top.
+        // Normal tiled: inset by border_width.
+        let mut raised: Vec<Window> = Vec::new();
         for (&window_id, window) in &self.window_map {
             if let Some((x, y, _w, _h)) = self.animations.get_position(window_id) {
-                let is_fs = self.tiling.is_fullscreen(window_id);
-                let offset = if is_fs { 0 } else { bw };
+                let is_special = self.tiling.is_fullscreen(window_id)
+                    || self.tiling.is_floating(window_id);
+                let offset = if is_special { 0 } else { bw };
                 self.space
                     .map_element(window.clone(), (x + offset, y + offset), false);
-                if is_fs {
-                    fs_win = Some(window.clone());
+                if is_special {
+                    raised.push(window.clone());
                 }
             }
         }
-        // Ensure fullscreen window stays on top after all map_element calls
-        if let Some(ref w) = fs_win {
+        for w in &raised {
             self.space.raise_element(w, true);
         }
 
