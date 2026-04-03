@@ -11,8 +11,13 @@
 
 use smithay::{
     backend::renderer::{
-        element::solid::SolidColorRenderElement, gles::GlesRenderer, ImportAll, ImportDmaWl,
-        ImportEgl, ImportMem, ImportMemWl, Renderer,
+        element::{
+            memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
+            solid::SolidColorRenderElement,
+            Kind,
+        },
+        gles::GlesRenderer,
+        ImportAll, ImportDmaWl, ImportEgl, ImportMem, ImportMemWl, Renderer,
     },
     input::pointer::CursorImageStatus,
     utils::Scale,
@@ -50,30 +55,69 @@ impl RwayRenderer for GlesRenderer {
 
 // ── Shared element generation ──
 
-/// Generate all overlay render elements (borders + cursor) for one frame.
+/// Pre-rendered overlay data. Solid elements need no renderer to create;
+/// text buffers need `&mut Renderer` to materialize into RenderElements.
+pub(crate) struct OverlayOutput {
+    pub solid: Vec<SolidColorRenderElement>,
+    pub text_buffers: Vec<(MemoryRenderBuffer, (i32, i32))>,
+}
+
+/// Generate all overlay elements for one frame.
 ///
-/// Both winit and udev backends call this to get non-Space elements.
-/// Returns SolidColorRenderElements that work with any Renderer.
-///
-/// Elements are in z-order: cursor first (highest), then borders.
+/// Solid elements (borders, cursor, title bar backgrounds) are ready to use.
+/// Text buffers require `materialize_text_elements()` with a renderer.
 pub(crate) fn overlay_elements(
-    state: &RwayState,
+    state: &mut RwayState,
     scale: Scale<f64>,
     border_config: &BorderConfig,
-) -> Vec<SolidColorRenderElement> {
+) -> OverlayOutput {
     let window_count = state.space.elements().count();
-    let mut elements = Vec::with_capacity(window_count * 4 + 1);
+    let mut solid = Vec::with_capacity(window_count * 4 + 1);
 
     // Cursor (highest z-order)
-    elements.extend(cursor_elements(state, scale));
+    solid.extend(cursor_elements(state, scale));
 
     // Borders
-    elements.extend(border_elements(state, border_config, scale));
+    solid.extend(border_elements(state, border_config, scale));
 
-    // Title bars for Tabbed/Stacked containers
-    elements.extend(title_bar_elements(state, border_config, scale));
+    // Title bar backgrounds (solid color)
+    solid.extend(title_bar_bg_elements(state, border_config, scale));
 
-    elements
+    // Title bar text (pre-rendered to MemoryRenderBuffer, needs renderer to materialize)
+    let text_buffers = title_bar_text_buffers(state, border_config);
+
+    OverlayOutput {
+        solid,
+        text_buffers,
+    }
+}
+
+/// Convert pre-rendered text buffers into RenderElements using a renderer.
+pub(crate) fn materialize_text_elements<R>(
+    renderer: &mut R,
+    text_buffers: &[(MemoryRenderBuffer, (i32, i32))],
+    _scale: Scale<f64>,
+) -> Vec<MemoryRenderBufferRenderElement<R>>
+where
+    R: Renderer + ImportMem,
+    R::TextureId: Clone + Send + 'static,
+{
+    text_buffers
+        .iter()
+        .filter_map(|(buf, (x, y))| {
+            let loc = (*x as f64, *y as f64);
+            MemoryRenderBufferRenderElement::from_buffer(
+                renderer,
+                loc,
+                buf,
+                None,
+                None,
+                None,
+                Kind::Unspecified,
+            )
+            .ok()
+        })
+        .collect()
 }
 
 /// Generate cursor placeholder element at current pointer position.
@@ -145,14 +189,78 @@ fn border_elements(
         .collect()
 }
 
-/// Generate title bar elements for Tabbed/Stacked containers.
-fn title_bar_elements(
+/// Generate title bar text as pre-rendered MemoryRenderBuffers.
+fn title_bar_text_buffers(
+    state: &mut RwayState,
+    config: &BorderConfig,
+) -> Vec<(MemoryRenderBuffer, (i32, i32))> {
+    let bars = state.cached_title_bars.clone();
+    if bars.is_empty() {
+        return vec![];
+    }
+
+    let text_color_focused = [0xFFu8, 0xFF, 0xFF, 0xFF];
+    let text_color_unfocused = [0xCC, 0xCC, 0xCC, 0xFF];
+    let fc = config.focused_color;
+    let bg_focused = [
+        (fc[0] * 255.0) as u8,
+        (fc[1] * 255.0) as u8,
+        (fc[2] * 255.0) as u8,
+        (fc[3] * 255.0) as u8,
+    ];
+    let uc = config.unfocused_color;
+    let bg_unfocused = [
+        (uc[0] * 0.7 * 255.0) as u8,
+        (uc[1] * 0.7 * 255.0) as u8,
+        (uc[2] * 0.7 * 255.0) as u8,
+        (uc[3] * 255.0) as u8,
+    ];
+
+    let mut result = Vec::with_capacity(bars.len());
+    for bar in &bars {
+        let title = get_window_title(state, bar.window_id);
+        let (text_color, bg_color) = if bar.focused {
+            (text_color_focused, bg_focused)
+        } else {
+            (text_color_unfocused, bg_unfocused)
+        };
+        let buf =
+            state
+                .text_renderer
+                .render_title(bar.window_id, &title, bar.rect, text_color, bg_color);
+        result.push((buf.clone(), (bar.rect.x, bar.rect.y)));
+    }
+    result
+}
+
+/// Get window title from the Wayland toplevel surface.
+fn get_window_title(state: &RwayState, window_id: u64) -> String {
+    state
+        .window_map
+        .get(&window_id)
+        .and_then(|window| window.toplevel())
+        .map(|tl| {
+            smithay::wayland::compositor::with_states(tl.wl_surface(), |states| {
+                use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .and_then(|data| data.lock().ok())
+                    .and_then(|attrs| attrs.title.clone())
+                    .unwrap_or_default()
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// Generate title bar background elements (solid color rectangles).
+fn title_bar_bg_elements(
     state: &RwayState,
     config: &BorderConfig,
     scale: Scale<f64>,
 ) -> Vec<SolidColorRenderElement> {
-    let gaps = state.gaps_config();
-    let bars = state.tiling.title_bars(&gaps);
+    // Use cached title bars from relayout() — no per-frame tree traversal
+    let bars = &state.cached_title_bars;
     if bars.is_empty() {
         return vec![];
     }

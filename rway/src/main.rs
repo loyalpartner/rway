@@ -12,6 +12,7 @@ mod ipc;
 mod render;
 mod shell;
 mod state;
+mod text;
 
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 pub use state::RwayState;

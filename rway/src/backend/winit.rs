@@ -11,13 +11,23 @@ use std::time::Duration;
 
 use smithay::{
     backend::{
-        renderer::{damage::OutputDamageTracker, gles::GlesRenderer},
+        renderer::{
+            damage::OutputDamageTracker,
+            element::{memory::MemoryRenderBufferRenderElement, solid::SolidColorRenderElement},
+            gles::GlesRenderer,
+        },
         winit::{self, WinitEvent},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::calloop::{self, EventLoop},
     utils::{Rectangle, Scale, Transform},
 };
+
+smithay::backend::renderer::element::render_elements! {
+    pub WinitOverlayElement<=GlesRenderer>;
+    Solid=SolidColorRenderElement,
+    Text=MemoryRenderBufferRenderElement<GlesRenderer>,
+}
 
 use crate::{border::BorderConfig, render, state::RwayState};
 
@@ -40,19 +50,24 @@ impl WinitState {
 
         {
             let scale = Scale::from(1.0_f64);
-            let custom_elements = render::overlay_elements(state, scale, &self.border_config);
+            let overlay = render::overlay_elements(state, scale, &self.border_config);
 
             let Ok((renderer, mut framebuffer)) = self.backend.bind() else {
                 tracing::warn!("Failed to bind winit backend framebuffer");
                 return has_animations;
             };
 
-            if let Err(e) = smithay::desktop::space::render_output::<
-                _,
-                smithay::backend::renderer::element::solid::SolidColorRenderElement,
-                _,
-                _,
-            >(
+            // Materialize text buffers into GPU-backed render elements
+            let text_elements =
+                render::materialize_text_elements(renderer, &overlay.text_buffers, scale);
+
+            // Combine solid + text into unified overlay elements
+            let mut custom_elements: Vec<WinitOverlayElement> =
+                Vec::with_capacity(overlay.solid.len() + text_elements.len());
+            custom_elements.extend(overlay.solid.into_iter().map(WinitOverlayElement::Solid));
+            custom_elements.extend(text_elements.into_iter().map(WinitOverlayElement::Text));
+
+            if let Err(e) = smithay::desktop::space::render_output::<_, WinitOverlayElement, _, _>(
                 &self.output,
                 renderer,
                 &mut framebuffer,

@@ -88,6 +88,7 @@ smithay::backend::renderer::element::render_elements! {
     pub UdevRenderElement<='a, UdevRenderer<'a>>;
     Space=smithay::desktop::space::SpaceRenderElements<UdevRenderer<'a>, smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement<UdevRenderer<'a>>>,
     Overlay=smithay::backend::renderer::element::solid::SolidColorRenderElement,
+    Text=smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement<UdevRenderer<'a>>,
 }
 
 impl RwayRenderer for UdevRenderer<'_> {
@@ -1131,7 +1132,7 @@ fn render_surface(
     // Shared pipeline: generate overlay elements BEFORE borrowing udev_data
     let border_config = BorderConfig::from_config(&state.config);
     let scale = Scale::from(1.0_f64);
-    let overlays = render::overlay_elements(state, scale, &border_config);
+    let overlay = render::overlay_elements(state, scale, &border_config);
 
     // 获取渲染器并执行渲染
     let udev = state.udev_data.as_mut().expect("udev backend initialized");
@@ -1167,10 +1168,15 @@ fn render_surface(
     >(&mut renderer, [&state.space], &output, 1.0)
     .unwrap_or_default();
 
-    // Compose: overlays (cursor + borders) first, then space surfaces
+    // Materialize text buffers into GPU-backed render elements
+    let text_elements =
+        render::materialize_text_elements(&mut renderer, &overlay.text_buffers, scale);
+
+    // Compose: overlays (cursor + borders + title text) first, then space surfaces
     let mut elements: Vec<UdevRenderElement<'_>> =
-        Vec::with_capacity(space_elements.len() + overlays.len());
-    elements.extend(overlays.into_iter().map(UdevRenderElement::Overlay));
+        Vec::with_capacity(overlay.solid.len() + text_elements.len() + space_elements.len());
+    elements.extend(overlay.solid.into_iter().map(UdevRenderElement::Overlay));
+    elements.extend(text_elements.into_iter().map(UdevRenderElement::Text));
     elements.extend(space_elements.into_iter().map(UdevRenderElement::Space));
 
     let result = surface.drm_output.render_frame(

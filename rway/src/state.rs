@@ -90,6 +90,12 @@ pub struct RwayState {
     // Cached set of visible window IDs (updated in relayout, consumed in update_animations)
     pub(crate) visible_windows: std::collections::HashSet<u64>,
 
+    // Cached title bar rects (updated in relayout, consumed in render)
+    pub(crate) cached_title_bars: Vec<rway_tiling::TitleBar>,
+
+    // Title bar text renderer (cosmic-text FontSystem + cache)
+    pub(crate) text_renderer: crate::text::TextRenderer,
+
     // Cursor state (updated by client via SeatHandler::cursor_image callback)
     pub(crate) cursor_status: CursorImageStatus,
 
@@ -233,6 +239,10 @@ impl RwayState {
 
             animations,
             visible_windows: std::collections::HashSet::new(),
+            cached_title_bars: Vec::new(),
+            text_renderer: crate::text::TextRenderer::new(crate::text::FontConfig::from_sway_font(
+                config.font.as_deref(),
+            )),
 
             cursor_status: CursorImageStatus::default_named(),
 
@@ -402,6 +412,9 @@ impl RwayState {
         for w in &raised_windows {
             self.space.raise_element(w, true);
         }
+
+        // Cache title bar rects so render doesn't re-traverse tree every frame
+        self.cached_title_bars = self.tiling.title_bars(&gaps);
 
         // Flush configure events to clients immediately so they can
         // start redrawing (e.g. fullscreen size change).

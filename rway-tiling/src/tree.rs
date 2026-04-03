@@ -2420,55 +2420,50 @@ impl Tree {
     }
 
     fn collect_title_bars(&self, node_id: NodeId, gaps: &GapsConfig, out: &mut Vec<TitleBar>) {
-        let Some(node) = self.get(node_id) else {
-            return;
+        // Extract scalars first, then drop the borrow so we can call &self methods
+        let (kind, layout, focused_idx) = match self.get(node_id) {
+            Some(n) => match &n.data {
+                NodeData::Container {
+                    layout,
+                    focused_child,
+                    ..
+                } => ('c', Some(*layout), *focused_child),
+                NodeData::Root | NodeData::Output { .. } | NodeData::Workspace { .. } => {
+                    ('p', None, 0)
+                }
+                _ => return,
+            },
+            None => return,
         };
 
-        match &node.data {
-            NodeData::Container {
-                layout,
-                focused_child,
-                ..
-            } => {
-                let children: Vec<NodeId> = node.children.clone();
-                let layout = *layout;
-                let focused_idx = *focused_child;
-
+        if kind == 'c' {
+            if let Some(layout) = layout {
                 if matches!(layout, Layout::Tabbed | Layout::Stacked) {
-                    if let Some(first_geom) = self.first_child_geometry(&children) {
+                    let children = self.children(node_id);
+                    if let Some(first_geom) = self.first_child_geometry(children) {
                         let n = children.len() as i32;
                         let th = gaps.title_bar_height;
                         let total_title_h = match layout {
                             Layout::Tabbed => th,
-                            _ => th * n, // Stacked
+                            _ => th * n,
                         };
-                        let container_x = first_geom.x;
-                        let container_y = first_geom.y - total_title_h;
-                        let container_w = first_geom.width;
+                        let cx = first_geom.x;
+                        let cy = first_geom.y - total_title_h;
+                        let cw = first_geom.width;
 
                         for (i, &child) in children.iter().enumerate() {
                             if let Some(wid) = self.leaf_window_id(child) {
                                 let rect = match layout {
                                     Layout::Tabbed => {
-                                        let tab_w = container_w / n.max(1);
+                                        let tw = cw / n.max(1);
                                         let w = if (i as i32) < n - 1 {
-                                            tab_w
+                                            tw
                                         } else {
-                                            container_w - tab_w * (n - 1)
+                                            cw - tw * (n - 1)
                                         };
-                                        Rect::new(
-                                            container_x + tab_w * i as i32,
-                                            container_y,
-                                            w,
-                                            th,
-                                        )
+                                        Rect::new(cx + tw * i as i32, cy, w, th)
                                     }
-                                    _ => Rect::new(
-                                        container_x,
-                                        container_y + th * i as i32,
-                                        container_w,
-                                        th,
-                                    ),
+                                    _ => Rect::new(cx, cy + th * i as i32, cw, th),
                                 };
                                 out.push(TitleBar {
                                     window_id: wid,
@@ -2479,19 +2474,13 @@ impl Tree {
                         }
                     }
                 }
+            }
+        }
 
-                // Recurse into children for nested containers
-                for &child in &children {
-                    self.collect_title_bars(child, gaps, out);
-                }
-            }
-            NodeData::Root | NodeData::Output { .. } | NodeData::Workspace { .. } => {
-                let children: Vec<NodeId> = node.children.clone();
-                for &child in &children {
-                    self.collect_title_bars(child, gaps, out);
-                }
-            }
-            NodeData::Window { .. } => {}
+        // Recurse into children (works for both Container and passthrough nodes)
+        let children: Vec<NodeId> = self.children(node_id).to_vec();
+        for child in children {
+            self.collect_title_bars(child, gaps, out);
         }
     }
 
