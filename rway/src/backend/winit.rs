@@ -74,7 +74,7 @@ pub(crate) fn init_winit(
                 }
 
                 WinitEvent::Redraw => {
-                    let has_animations = state.update_animations();
+                    let _has_animations = state.update_animations();
                     state.needs_redraw = false;
 
                     let size = backend.window_size();
@@ -114,6 +114,7 @@ pub(crate) fn init_winit(
                         }
                     }
 
+                    // submit() provides VSync throttling (~60fps)
                     if let Err(e) = backend.submit(Some(&[damage])) {
                         tracing::warn!("Failed to submit winit frame: {:?}", e);
                     }
@@ -133,9 +134,9 @@ pub(crate) fn init_winit(
 
                     let _ = state.display_handle.flush_clients();
 
-                    if has_animations || state.needs_redraw {
-                        backend.window().request_redraw();
-                    }
+                    // Always request next frame. VSync via submit() throttles
+                    // to ~60fps. Damage tracking skips GPU work when unchanged.
+                    backend.window().request_redraw();
                 }
 
                 WinitEvent::CloseRequested => {

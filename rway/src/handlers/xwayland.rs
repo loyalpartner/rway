@@ -63,15 +63,11 @@ impl XwmHandler for RwayState {
             return;
         }
 
-        // 创建统一的 Window 对象并插入平铺树
+        // Create a unified Window object and insert into tiling tree.
+        // The parent container's layout determines split direction (no pending_split).
         let win = Window::new_x11_window(window.clone());
         let window_id = self.alloc_window_id();
-        let split_layout = self
-            .pending_split
-            .take()
-            .unwrap_or(rway_tiling::Layout::SplitH);
-        self.tiling
-            .insert_window_with_layout(window_id, split_layout);
+        self.tiling.insert_window(window_id);
         self.window_map.insert(window_id, win.clone());
         self.space.map_element(win.clone(), (0, 0), false);
 

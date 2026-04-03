@@ -68,7 +68,7 @@ impl CompositorHandler for RwayState {
         }
 
         // 6. Schedule redraw — client submitted new content
-        self.needs_redraw = true;
+        self.schedule_redraw();
     }
 }
 

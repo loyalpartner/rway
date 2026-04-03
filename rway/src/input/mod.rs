@@ -164,7 +164,7 @@ impl RwayState {
                         if let Some((&win_id, _)) = self.window_map.iter().find(|(_, w)| {
                             w.toplevel()
                                 .zip(window.toplevel())
-                                .map_or(false, |(a, b)| a.wl_surface() == b.wl_surface())
+                                .is_some_and(|(a, b)| a.wl_surface() == b.wl_surface())
                         }) {
                             self.tiling.focus_window(win_id);
                         }

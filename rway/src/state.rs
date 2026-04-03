@@ -78,9 +78,6 @@ pub struct RwayState {
     // Cursor state (updated by client via SeatHandler::cursor_image callback)
     pub(crate) cursor_status: CursorImageStatus,
 
-    // Pending split direction for next window insertion (set by `splith`/`splitv`)
-    pub(crate) pending_split: Option<rway_tiling::Layout>,
-
     // Configuration
     pub(crate) config: rway_config::Config,
 
@@ -206,7 +203,6 @@ impl RwayState {
             animations,
 
             cursor_status: CursorImageStatus::default_named(),
-            pending_split: None,
 
             loop_handle,
 
@@ -247,6 +243,12 @@ impl RwayState {
             rway_config::BorderStyle::Normal(w) | rway_config::BorderStyle::Pixel(w) => *w as i32,
             rway_config::BorderStyle::None => 0,
         }
+    }
+
+    /// Mark content as changed. The winit backend's continuous render
+    /// loop will pick this up on the next frame (~16ms max).
+    pub fn schedule_redraw(&mut self) {
+        self.needs_redraw = true;
     }
 
     /// 重新计算平铺布局并更新 Space 中窗口的位置和大小
@@ -303,7 +305,7 @@ impl RwayState {
         }
 
         // Layout changed — schedule redraw
-        self.needs_redraw = true;
+        self.schedule_redraw();
     }
 
     /// 确保当前聚焦的工作区在一个活跃（有映射到 Space 中的）输出上。

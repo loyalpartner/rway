@@ -294,10 +294,10 @@ fn test_splith_two_windows() -> TestStatus {
 
 fn test_splitv_two_windows() -> TestStatus {
     let mut tree = make_tree_with_workspace();
+    // Sway way: insert first window, split to set SplitV, then insert second window
     rway_tiling::commands::insert_window(&mut tree, 1);
-    rway_tiling::commands::insert_window(&mut tree, 2);
-    // 切换到 SplitV
     rway_tiling::commands::split(&mut tree, rway_tiling::Layout::SplitV);
+    rway_tiling::commands::insert_window(&mut tree, 2);
 
     let geoms = compute_and_get_geometries(&mut tree);
     if geoms.len() != 2 {
@@ -760,14 +760,21 @@ fn test_move_focus_at_boundary() -> TestStatus {
     rway_tiling::commands::insert_window(&mut tree, 1);
     rway_tiling::commands::insert_window(&mut tree, 2);
 
-    // 焦点在窗口 2（最右），先向左移到窗口 1
+    // Sway default: focus_wrapping yes — focus wraps at boundary
+    // Focus is on window 2 (rightmost), move left to window 1
     rway_tiling::commands::move_focus(&mut tree, rway_tiling::Direction::Left);
-    // 窗口 1 是最左侧，再向左应返回 false
+    // Window 1 is leftmost, move left again should wrap to window 2
     let moved = rway_tiling::commands::move_focus(&mut tree, rway_tiling::Direction::Left);
     if !moved {
-        TestStatus::Pass
-    } else {
-        TestStatus::Fail("move_focus at boundary should return false".into())
+        return TestStatus::Fail("focus_wrapping yes: move_focus at boundary should wrap".into());
+    }
+    // Verify focus wrapped to window 2
+    match rway_tiling::commands::find_focused_window_id(&tree) {
+        Some(2) => TestStatus::Pass,
+        other => TestStatus::Fail(format!(
+            "expected focus on window 2 after wrap, got {:?}",
+            other
+        )),
     }
 }
 

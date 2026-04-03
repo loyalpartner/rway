@@ -43,15 +43,10 @@ impl XdgShellHandler for RwayState {
         // 确保有活跃输出上的工作区可用
         self.ensure_active_workspace();
 
-        // Allocate window ID and insert into tiling tree
-        // Use pending_split direction if set (from splith/splitv command), otherwise default SplitH
+        // Allocate window ID and insert into tiling tree.
+        // The parent container's layout determines split direction (no pending_split).
         let window_id = self.alloc_window_id();
-        let split_layout = self
-            .pending_split
-            .take()
-            .unwrap_or(rway_tiling::Layout::SplitH);
-        self.tiling
-            .insert_window_with_layout(window_id, split_layout);
+        self.tiling.insert_window(window_id);
         self.window_map.insert(window_id, window.clone());
 
         // 映射到 Space 并提升到顶层

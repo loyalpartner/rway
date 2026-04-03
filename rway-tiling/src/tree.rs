@@ -128,6 +128,8 @@ pub struct Tree {
     root: NodeId,
     /// Current focus level (for focus_parent/focus_child), None means leaf window
     pub focus_node: Option<NodeId>,
+    /// Sway focus_wrapping: true = yes (default), false = no
+    pub focus_wrapping: bool,
 }
 
 impl Tree {
@@ -143,6 +145,7 @@ impl Tree {
             free_list: Vec::new(),
             root: NodeId(0),
             focus_node: None,
+            focus_wrapping: true,
         }
     }
 
@@ -245,7 +248,6 @@ enum LayoutInfo {
     Split {
         layout: Layout,
         sizes: Vec<f64>,
-        focused_child: usize,
         children: Vec<NodeId>,
     },
     Leaf {
@@ -538,15 +540,21 @@ impl Tree {
 // ── Command methods ─────────────────────────────────────────────
 
 impl Tree {
-    /// Insert a new window in the focused workspace's focused position
+    /// Insert a new window as sibling AFTER the focused window in the
+    /// focused workspace. The parent container's layout determines the
+    /// split direction (no pending_split needed).
     pub fn insert_window(&mut self, window_id: u64) -> NodeId {
-        self.insert_window_with_layout(window_id, Layout::SplitH)
+        let node_id = self.insert_window_with_layout(window_id, Layout::SplitH);
+        self.focus_window(window_id); // sync full focus path
+        node_id
     }
 
-    /// Insert a new window using the specified layout for the wrapping container
+    /// Insert a new window using the specified layout hint.
     ///
-    /// In Sway, `splith`/`splitv` sets the direction for the next window insertion.
-    /// This method allows specifying that direction.
+    /// The layout is used only when the first container must be created
+    /// (workspace has no container yet). In all other cases the parent
+    /// container's existing layout determines placement — the new window
+    /// is inserted at focused_idx + 1, matching Sway behavior.
     pub fn insert_window_with_layout(&mut self, window_id: u64, layout: Layout) -> NodeId {
         let ws_id = match self.focused_workspace() {
             Some(id) => id,
@@ -575,36 +583,102 @@ impl Tree {
             self.cleanup_empty_container(pid);
         }
 
+        // After removal, sync focus path from the new focused leaf
+        if let Some(new_focused) = self.focused_window_id() {
+            self.focus_window(new_focused);
+        }
+
         true
     }
 
-    /// Move focus in the given direction within the focused workspace
+    /// Move focus in the given direction within the focused workspace.
+    ///
+    /// Sway focus_wrapping=yes semantics: ascend through the tree first,
+    /// only wrap to the opposite end as a last resort after exhausting
+    /// all ancestors.
     pub fn move_focus(&mut self, direction: Direction) -> bool {
         let ws_id = match self.focused_workspace() {
             Some(id) => id,
             None => return false,
         };
 
+        // Try normal focus movement (no wrapping — boundary returns false)
         let result = self.move_focus_in(ws_id, direction);
         if result {
-            // Re-sync the full focused_child path from the new leaf
             if let Some(wid) = self.focused_window_id() {
                 self.focus_window(wid);
             }
+            return true;
         }
-        result
+
+        // Normal movement failed (exhausted tree). If wrapping enabled,
+        // wrap at the deepest parallel container that was at boundary.
+        if self.focus_wrapping {
+            if let Some(wrap_id) = self.find_wrap_container(ws_id, direction) {
+                let children_len = self.children(wrap_id).len();
+                let wrap_idx = match direction {
+                    Direction::Right | Direction::Down => 0,
+                    Direction::Left | Direction::Up => children_len.saturating_sub(1),
+                };
+                if let Some(node) = self.get_mut(wrap_id) {
+                    if let NodeData::Container { ref mut focused_child, .. } = node.data {
+                        *focused_child = wrap_idx;
+                    }
+                }
+                if let Some(wid) = self.focused_window_id() {
+                    self.focus_window(wid);
+                }
+                return true;
+            }
+        }
+
+        false
     }
 
-    /// Change the layout of the focused container
+    /// Sway-compatible `split h/v`: IMMEDIATELY wrap the focused window
+    /// in a new container with the specified layout.
+    ///
+    /// If the focused window's parent already has the matching layout AND the
+    /// window is the only child, this is a no-op. Otherwise, the focused
+    /// window is reparented into a freshly created container.
     pub fn split(&mut self, layout: Layout) {
         let ws_id = match self.focused_workspace() {
             Some(id) => id,
             None => return,
         };
 
-        if let Some(container_id) = self.find_focused_container(ws_id) {
-            let _ = self.set_layout(container_id, layout);
+        let leaf_id = match self.find_focused_leaf_node(ws_id) {
+            Some(id) => id,
+            None => return,
+        };
+
+        let parent_id = match self.parent(leaf_id) {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Check if parent already has matching layout with only this one child
+        let child_count = self.children(parent_id).len();
+        let parent_layout = self.get(parent_id).and_then(|n| match &n.data {
+            NodeData::Container { layout: l, .. } => Some(*l),
+            _ => None,
+        });
+
+        if let Some(pl) = parent_layout {
+            if pl == layout && child_count == 1 {
+                return; // Already matches, nothing to do
+            }
         }
+
+        // Find the index of this leaf in its parent
+        let child_index = match self.children(parent_id).iter().position(|&c| c == leaf_id) {
+            Some(i) => i,
+            None => return,
+        };
+
+        // Wrap: remove leaf from parent, create container at same position,
+        // reparent leaf into the new container (no new window added yet)
+        self.wrap_leaf_in_container(parent_id, leaf_id, child_index, layout);
     }
 
     /// Toggle the floating state of a window
@@ -666,8 +740,13 @@ impl Tree {
 
     /// Move the focused window in the given direction (Sway behavior).
     ///
-    /// Finds the actually-focused leaf window, then swaps it with its
-    /// neighbor in the parent container that matches the direction axis.
+    /// 1. Same-level swap: if the leaf's parent axis matches the direction and
+    ///    the window is not at the boundary, swap with the neighbor.
+    /// 2. Cross-container: if the window is at a boundary (or the parent axis
+    ///    doesn't match), walk up to find an ancestor container whose axis
+    ///    matches, extract the window from its current container, and insert
+    ///    it at the appropriate position in the ancestor.
+    /// 3. Clean up any empty containers after extraction.
     pub fn move_window(&mut self, direction: Direction) -> bool {
         // 1. Find the focused leaf window node
         let ws_id = match self.focused_workspace() {
@@ -679,8 +758,17 @@ impl Tree {
             None => return false,
         };
 
+        // Get the leaf's window_id for re-focusing later
+        let window_id = match self.get(leaf_id) {
+            Some(n) => match &n.data {
+                NodeData::Window { window_id, .. } => *window_id,
+                _ => return false,
+            },
+            None => return false,
+        };
+
         // 2. Walk up from the leaf to find the nearest container whose layout
-        //    matches the direction axis (SplitH for Left/Right, SplitV for Up/Down)
+        //    axis matches the direction (SplitH for Left/Right, SplitV for Up/Down)
         let mut current = leaf_id;
         loop {
             let parent_id = match self.parent(current) {
@@ -690,14 +778,14 @@ impl Tree {
 
             let parent_info = match self.get(parent_id) {
                 Some(n) => match &n.data {
-                    NodeData::Container { layout, .. } => Some((*layout, n.children.to_vec())),
+                    NodeData::Container { layout, .. } => Some(*layout),
                     NodeData::Workspace { .. } => None,
                     _ => None,
                 },
                 None => return false,
             };
 
-            let Some((layout, children)) = parent_info else {
+            let Some(layout) = parent_info else {
                 return false; // reached workspace without finding matching container
             };
 
@@ -705,45 +793,116 @@ impl Tree {
                 (layout, direction),
                 (Layout::SplitH, Direction::Left | Direction::Right)
                     | (Layout::SplitV, Direction::Up | Direction::Down)
+                    | (Layout::Tabbed, Direction::Left | Direction::Right)
+                    | (Layout::Stacked, Direction::Up | Direction::Down)
             );
 
             if axis_matches {
-                // Found the right container — swap `current` with its neighbor
+                let children: Vec<NodeId> = self.children(parent_id).to_vec();
                 let Some(idx) = children.iter().position(|&c| c == current) else {
                     return false;
                 };
 
-                let new_pos = match direction {
-                    Direction::Left | Direction::Up => {
-                        if idx > 0 { idx - 1 } else { return false; }
-                    }
-                    Direction::Right | Direction::Down => {
-                        if idx + 1 < children.len() { idx + 1 } else { return false; }
-                    }
+                let at_boundary = match direction {
+                    Direction::Left | Direction::Up => idx == 0,
+                    Direction::Right | Direction::Down => idx + 1 >= children.len(),
                 };
 
-                if let Some(node) = self.get_mut(parent_id) {
-                    node.children.swap(idx, new_pos);
-                    if let NodeData::Container {
-                        ref mut sizes,
-                        ..
-                    } = node.data
-                    {
-                        if idx < sizes.len() && new_pos < sizes.len() {
-                            sizes.swap(idx, new_pos);
+                if !at_boundary && current == leaf_id {
+                    let new_pos = match direction {
+                        Direction::Left | Direction::Up => idx - 1,
+                        Direction::Right | Direction::Down => idx + 1,
+                    };
+
+                    let target_id = children[new_pos];
+                    let target_is_container = self
+                        .get(target_id)
+                        .map(|n| matches!(n.data, NodeData::Container { .. }))
+                        .unwrap_or(false);
+
+                    if !target_is_container {
+                        // Target is a leaf: simple swap
+                        if let Some(node) = self.get_mut(parent_id) {
+                            node.children.swap(idx, new_pos);
+                            if let NodeData::Container {
+                                ref mut sizes, ..
+                            } = node.data
+                            {
+                                if idx < sizes.len() && new_pos < sizes.len() {
+                                    sizes.swap(idx, new_pos);
+                                }
+                            }
+                        }
+                        self.focus_window(window_id);
+                        return true;
+                    }
+
+                    // Target is a container: enter it (Sway behavior).
+                    // Extract leaf from current parent and insert into target.
+                    return self.move_leaf_into_container(
+                        leaf_id, window_id, parent_id, idx, target_id, direction,
+                    );
+                }
+
+                if current != leaf_id {
+                    // Cross-container move (Sway promote): extract leaf from
+                    // its current parent and insert at the target position in
+                    // this ancestor container. Handles both boundary and
+                    // non-boundary cases — at boundary, insert at the edge.
+                    let target_idx = match direction {
+                        Direction::Left | Direction::Up => idx,
+                        Direction::Right | Direction::Down => idx + 1,
+                    };
+
+                    // Extract leaf from its current parent
+                    let leaf_parent = match self.parent(leaf_id) {
+                        Some(id) => id,
+                        None => return false,
+                    };
+                    let leaf_child_idx = self
+                        .children(leaf_parent)
+                        .iter()
+                        .position(|&c| c == leaf_id);
+
+                    // Remove leaf from old parent
+                    if let Some(p) = self.get_mut(leaf_parent) {
+                        p.children.retain(|&c| c != leaf_id);
+                    }
+                    if let Some(li) = leaf_child_idx {
+                        let _ = self.remove_container_size(leaf_parent, li);
+                    }
+
+                    // Insert leaf into ancestor container at the target position
+                    if let Some(p) = self.get_mut(parent_id) {
+                        let insert_pos = target_idx.min(p.children.len());
+                        p.children.insert(insert_pos, leaf_id);
+                        if let NodeData::Container {
+                            ref mut sizes,
+                            ref mut focused_child,
+                            ..
+                        } = p.data
+                        {
+                            sizes.insert(insert_pos, 1.0);
+                            *focused_child = insert_pos;
                         }
                     }
+                    // Update leaf's parent pointer
+                    if let Some(n) = self.get_mut(leaf_id) {
+                        n.parent = Some(parent_id);
+                    }
+
+                    // Clean up empty container left behind
+                    self.cleanup_empty_container(leaf_parent);
+
+                    // Re-sync focus path
+                    self.focus_window(window_id);
+                    return true;
                 }
-                // Re-sync the entire focused_child path from the leaf
-                // to handle cases where the swap changes ancestor relationships
-                let win_id = self.find_focused_leaf(leaf_id);
-                if let Some(wid) = win_id {
-                    self.focus_window(wid);
-                }
-                return true;
+
+                // At boundary — continue walking up to find a higher ancestor
             }
 
-            // This container's axis doesn't match — walk up
+            // This container's axis doesn't match or we're at boundary — walk up
             current = parent_id;
         }
     }
@@ -768,27 +927,38 @@ impl Tree {
 
     /// Resize a node's proportion in its parent container
     pub fn resize_container(&mut self, node_id: NodeId, axis: ResizeAxis, delta_ppt: f64) -> bool {
-        let parent_id = match self.parent(node_id) {
-            Some(id) => id,
-            None => return false,
-        };
+        // Walk up from node_id to find an ancestor container whose layout matches axis
+        let mut current = node_id;
+        loop {
+            let parent_id = match self.parent(current) {
+                Some(id) => id,
+                None => return false,
+            };
 
-        let layout_matches = match self.get(parent_id) {
-            Some(n) => match &n.data {
-                NodeData::Container { layout, .. } => matches!(
-                    (axis, layout),
-                    (ResizeAxis::Width, Layout::SplitH) | (ResizeAxis::Height, Layout::SplitV)
-                ),
-                _ => false,
-            },
-            None => false,
-        };
-        if !layout_matches {
-            return false;
+            let layout_matches = match self.get(parent_id) {
+                Some(n) => match &n.data {
+                    NodeData::Container { layout, .. } => matches!(
+                        (axis, layout),
+                        (ResizeAxis::Width, Layout::SplitH)
+                            | (ResizeAxis::Height, Layout::SplitV)
+                    ),
+                    NodeData::Workspace { .. } => return false, // stop at workspace
+                    _ => false,
+                },
+                None => return false,
+            };
+
+            if layout_matches {
+                return self.apply_resize(parent_id, current, delta_ppt);
+            }
+            current = parent_id;
         }
+    }
 
+    /// Apply resize delta to `child` within `parent_id`.
+    fn apply_resize(&mut self, parent_id: NodeId, child: NodeId, delta_ppt: f64) -> bool {
         let children: Vec<NodeId> = self.children(parent_id).to_vec();
-        let my_index = match children.iter().position(|&c| c == node_id) {
+        let my_index = match children.iter().position(|&c| c == child) {
             Some(i) => i,
             None => return false,
         };
@@ -1255,16 +1425,30 @@ impl Tree {
 
         let children: Vec<NodeId> = self.children(parent_id).to_vec();
 
+        // Empty workspace/container: if parent is a workspace, create a container
+        // with the specified layout and insert the window into it.
         if children.is_empty() {
+            let is_workspace = self
+                .get(parent_id)
+                .map(|n| matches!(n.data, NodeData::Workspace { .. }))
+                .unwrap_or(false);
+
+            if is_workspace {
+                // First window in workspace — wrap in a container
+                let container_id = self.add_node(
+                    parent_id,
+                    NodeData::Container {
+                        layout: split_layout,
+                        sizes: vec![1.0],
+                        focused_child: 0,
+                    },
+                );
+                return self.add_node(container_id, new_win_data);
+            }
             return self.add_node(parent_id, new_win_data);
         }
 
-        // Check if parent is a Container with the same layout direction
-        let parent_layout = self.get(parent_id).and_then(|n| match &n.data {
-            NodeData::Container { layout, .. } => Some(*layout),
-            _ => None,
-        });
-
+        // Determine focused child
         let focused_idx = match self.get(parent_id) {
             Some(n) => match &n.data {
                 NodeData::Container { focused_child, .. } => *focused_child,
@@ -1273,74 +1457,117 @@ impl Tree {
             },
             None => 0,
         };
-        let focused_id = children.get(focused_idx).copied().unwrap_or(children[0]);
+        let focused_id = children
+            .get(focused_idx)
+            .copied()
+            .unwrap_or(children[children.len() - 1]);
 
-        let is_win = self
+        let focused_is_win = self
             .get(focused_id)
             .map(|n| matches!(n.data, NodeData::Window { .. }))
             .unwrap_or(false);
 
-        if is_win {
-            // Sway behavior: if parent container has the same layout direction,
-            // add new window as a sibling (not nested). Only wrap in a new
-            // sub-container when the split direction differs.
-            if parent_layout == Some(split_layout) {
-                // Add as sibling in the same container — equal share
-                let new_id = self.add_node(parent_id, new_win_data);
-                let _ = self.add_container_size(parent_id);
-                // Update focused_child to the new window
-                let new_count = self.children(parent_id).len();
+        if focused_is_win {
+            let is_container = self
+                .get(parent_id)
+                .map(|n| matches!(n.data, NodeData::Container { .. }))
+                .unwrap_or(false);
+
+            if is_container {
+                // Sway behavior: always insert as sibling at focused_idx + 1.
+                // The parent container's existing layout determines the split
+                // direction. The split_layout parameter is NOT used here — it
+                // only matters when creating the initial container from an
+                // empty workspace.
+                let insert_pos = focused_idx + 1;
+                let new_id = self.insert_child_at(parent_id, insert_pos, new_win_data);
+
+                // Add a size entry at the same position
                 if let Some(node) = self.get_mut(parent_id) {
                     if let NodeData::Container {
+                        ref mut sizes,
                         ref mut focused_child,
                         ..
                     } = node.data
                     {
-                        *focused_child = new_count - 1;
+                        sizes.insert(insert_pos, 1.0);
+                        *focused_child = insert_pos;
                     }
                 }
                 return new_id;
             }
-            self.wrap_with_container(
-                parent_id,
-                focused_id,
-                focused_idx,
-                new_win_data,
-                split_layout,
-            )
+
+            // Parent is a Workspace with direct window children — wrap in a container
+            self.wrap_workspace_children_in_container(parent_id, new_win_data, split_layout)
         } else {
+            // Focused child is a container — recurse into it
             self.insert_window_into(focused_id, window_id, split_layout)
         }
     }
 
-    fn wrap_with_container(
+    /// Insert a child node at a specific index in parent's children list.
+    /// This does NOT update sizes — caller must do that.
+    fn insert_child_at(
         &mut self,
         parent_id: NodeId,
-        existing_win: NodeId,
-        child_index: usize,
-        new_win_data: NodeData,
-        split_layout: Layout,
+        index: usize,
+        data: NodeData,
     ) -> NodeId {
-        // 1. Remove existing window from parent's children list (keep the slot for replacement)
-        if let Some(parent_node) = self.get_mut(parent_id) {
-            parent_node.children.retain(|&c| c != existing_win);
-        }
-        // Remove the size entry — we'll re-insert at the same position
-        let _ = self.remove_container_size(parent_id, child_index);
-
-        // 2. Orphan the existing window temporarily
-        if let Some(win_node) = self.get_mut(existing_win) {
-            win_node.parent = None;
-        }
-
-        // 3. Create new container (allocate node, but DON'T use add_node which appends to end)
-        let container_data = NodeData::Container {
-            layout: split_layout,
-            sizes: vec![1.0, 1.0],
-            focused_child: 1, // new window is focused
+        // Allocate node
+        let id = if let Some(reused) = self.free_list.pop() {
+            reused
+        } else {
+            let idx = self.nodes.len();
+            self.nodes.push(None);
+            NodeId(idx)
         };
 
-        // Allocate the container node ID
+        let node = Node {
+            parent: Some(parent_id),
+            children: Vec::new(),
+            data,
+        };
+        self.nodes[id.0] = Some(node);
+
+        // Insert at specific position in parent's children (not appended to end)
+        if let Some(parent_node) = self.get_mut(parent_id) {
+            let insert_pos = index.min(parent_node.children.len());
+            parent_node.children.insert(insert_pos, id);
+        }
+
+        id
+    }
+
+    /// Wrap a single leaf window inside a new container (used by `split`).
+    /// The new container replaces the leaf at its original position in the parent.
+    /// The leaf becomes the only child of the new container.
+    fn wrap_leaf_in_container(
+        &mut self,
+        parent_id: NodeId,
+        leaf_id: NodeId,
+        child_index: usize,
+        layout: Layout,
+    ) {
+        // 1. Remove leaf from parent's children list
+        if let Some(parent_node) = self.get_mut(parent_id) {
+            parent_node.children.retain(|&c| c != leaf_id);
+        }
+        // Remove the corresponding size entry
+        let _ = self.remove_container_size(parent_id, child_index);
+
+        // 2. Orphan the leaf temporarily
+        if let Some(leaf_node) = self.get_mut(leaf_id) {
+            leaf_node.parent = None;
+        }
+
+        // 3. Create new container with the specified layout
+        let container_data = NodeData::Container {
+            layout,
+            sizes: vec![1.0],
+            focused_child: 0,
+        };
+
+        // Allocate the container node
         let container_id = if let Some(reused) = self.free_list.pop() {
             reused
         } else {
@@ -1354,11 +1581,10 @@ impl Tree {
             data: container_data,
         });
 
-        // 4. Insert container at the ORIGINAL position in parent (not appended to end)
+        // 4. Insert container at the ORIGINAL position in parent
         if let Some(parent_node) = self.get_mut(parent_id) {
             let insert_pos = child_index.min(parent_node.children.len());
             parent_node.children.insert(insert_pos, container_id);
-            // Re-add size entry at the same position
             if let NodeData::Container {
                 ref mut sizes,
                 ref mut focused_child,
@@ -1370,18 +1596,70 @@ impl Tree {
             }
         }
 
-        // 5. Re-parent existing window under container
-        if let Some(win_node) = self.get_mut(existing_win) {
-            win_node.parent = Some(container_id);
+        // 5. Re-parent leaf under container
+        if let Some(leaf_node) = self.get_mut(leaf_id) {
+            leaf_node.parent = Some(container_id);
         }
         if let Some(container_node) = self.get_mut(container_id) {
-            container_node.children.push(existing_win);
+            container_node.children.push(leaf_id);
+        }
+    }
+
+    /// Wrap all existing workspace children into a new container and add
+    /// a new window. Used when the workspace has direct window children
+    /// with no container.
+    fn wrap_workspace_children_in_container(
+        &mut self,
+        ws_id: NodeId,
+        new_win_data: NodeData,
+        layout: Layout,
+    ) -> NodeId {
+        let children: Vec<NodeId> = self.children(ws_id).to_vec();
+
+        // Create a container
+        let container_id = self.add_node(
+            ws_id,
+            NodeData::Container {
+                layout,
+                sizes: Vec::new(),
+                focused_child: 0,
+            },
+        );
+
+        // Move existing children under the new container (remove from ws first)
+        if let Some(ws_node) = self.get_mut(ws_id) {
+            ws_node.children.retain(|&c| c == container_id);
         }
 
-        // 6. Add new window to container
-        let new_win_id = self.add_node(container_id, new_win_data);
+        for &child in &children {
+            if let Some(child_node) = self.get_mut(child) {
+                child_node.parent = Some(container_id);
+            }
+            if let Some(container_node) = self.get_mut(container_id) {
+                container_node.children.push(child);
+                if let NodeData::Container { ref mut sizes, .. } = container_node.data {
+                    sizes.push(1.0);
+                }
+            }
+        }
 
-        new_win_id
+        // Add new window to container
+        let new_id = self.add_node(container_id, new_win_data);
+        let _ = self.add_container_size(container_id);
+
+        // Focus the new window
+        let new_count = self.children(container_id).len();
+        if let Some(node) = self.get_mut(container_id) {
+            if let NodeData::Container {
+                ref mut focused_child,
+                ..
+            } = node.data
+            {
+                *focused_child = new_count - 1;
+            }
+        }
+
+        new_id
     }
 
     fn find_window_by_id(&self, window_id: u64) -> Option<NodeId> {
@@ -1403,6 +1681,132 @@ impl Tree {
             }
         }
         None
+    }
+
+    /// Sway `container_move_to_container_from_direction`: move a leaf window
+    /// INTO a target container. If the target's layout is parallel to the
+    /// direction, insert at the near edge. If perpendicular, recurse into
+    /// the focused child.
+    fn move_leaf_into_container(
+        &mut self,
+        leaf_id: NodeId,
+        window_id: u64,
+        old_parent: NodeId,
+        old_idx: usize,
+        target: NodeId,
+        direction: Direction,
+    ) -> bool {
+        // Determine target container's layout
+        let target_layout = match self.get(target) {
+            Some(n) => match &n.data {
+                NodeData::Container { layout, .. } => *layout,
+                _ => return false,
+            },
+            None => return false,
+        };
+
+        let is_parallel = matches!(
+            (target_layout, direction),
+            (Layout::SplitH, Direction::Left | Direction::Right)
+            | (Layout::SplitV, Direction::Up | Direction::Down)
+            | (Layout::Tabbed, Direction::Left | Direction::Right)
+            | (Layout::Stacked, Direction::Up | Direction::Down)
+        );
+
+        let dest_id;
+        let insert_pos;
+
+        if is_parallel {
+            // Parallel: insert at the near edge of the target container
+            dest_id = target;
+            insert_pos = match direction {
+                Direction::Right | Direction::Down => 0,
+                Direction::Left | Direction::Up => self.children(target).len(),
+            };
+        } else {
+            // Perpendicular: recurse into the focused child
+            let focused = match self.get(target) {
+                Some(n) => match &n.data {
+                    NodeData::Container { focused_child, .. } => *focused_child,
+                    _ => 0,
+                },
+                None => return false,
+            };
+            let target_children = self.children(target).to_vec();
+            let Some(&child) = target_children.get(focused) else {
+                // Empty container: insert directly
+                dest_id = target;
+                insert_pos = 0;
+                return self.extract_and_insert(
+                    leaf_id, window_id, old_parent, old_idx, dest_id, insert_pos,
+                );
+            };
+
+            // If the child is a container, recurse
+            let child_is_container = self
+                .get(child)
+                .map(|n| matches!(n.data, NodeData::Container { .. }))
+                .unwrap_or(false);
+
+            if child_is_container {
+                return self.move_leaf_into_container(
+                    leaf_id, window_id, old_parent, old_idx, child, direction,
+                );
+            }
+
+            // Child is a leaf: insert as sibling
+            dest_id = target;
+            let child_idx = self
+                .children(target)
+                .iter()
+                .position(|&c| c == child)
+                .unwrap_or(0);
+            insert_pos = match direction {
+                Direction::Right | Direction::Down => child_idx + 1,
+                Direction::Left | Direction::Up => child_idx,
+            };
+        }
+
+        self.extract_and_insert(leaf_id, window_id, old_parent, old_idx, dest_id, insert_pos)
+    }
+
+    /// Extract a leaf from its old parent and insert into a new location.
+    fn extract_and_insert(
+        &mut self,
+        leaf_id: NodeId,
+        window_id: u64,
+        old_parent: NodeId,
+        old_idx: usize,
+        dest_id: NodeId,
+        insert_pos: usize,
+    ) -> bool {
+        // Remove leaf from old parent
+        if let Some(p) = self.get_mut(old_parent) {
+            p.children.retain(|&c| c != leaf_id);
+        }
+        let _ = self.remove_container_size(old_parent, old_idx);
+
+        // Insert into destination
+        if let Some(p) = self.get_mut(dest_id) {
+            let pos = insert_pos.min(p.children.len());
+            p.children.insert(pos, leaf_id);
+            if let NodeData::Container {
+                ref mut sizes,
+                ref mut focused_child,
+                ..
+            } = p.data
+            {
+                sizes.insert(pos, 1.0);
+                *focused_child = pos;
+            }
+        }
+        if let Some(n) = self.get_mut(leaf_id) {
+            n.parent = Some(dest_id);
+        }
+
+        self.cleanup_empty_container(old_parent);
+        self.focus_window(window_id);
+        true
     }
 
     fn cleanup_empty_container(&mut self, node_id: NodeId) {
@@ -1461,9 +1865,16 @@ impl Tree {
                         | (Layout::SplitH, Direction::Right)
                         | (Layout::SplitV, Direction::Up)
                         | (Layout::SplitV, Direction::Down)
+                        | (Layout::Tabbed, Direction::Left)
+                        | (Layout::Tabbed, Direction::Right)
+                        | (Layout::Stacked, Direction::Up)
+                        | (Layout::Stacked, Direction::Down)
                 );
 
                 if can_move && !children.is_empty() {
+                    // At boundary, return false to let parent containers
+                    // handle the movement. Wrapping is handled at the top
+                    // level in move_focus() as a last resort.
                     let new_focus = match direction {
                         Direction::Left | Direction::Up => {
                             if focused > 0 {
@@ -1504,6 +1915,51 @@ impl Tree {
             }
             _ => false,
         }
+    }
+
+    /// Walk the focused path from workspace down, return the deepest
+    /// container whose axis is parallel to `direction` and is at boundary.
+    /// Used for focus_wrapping=yes: wrap here as a last resort.
+    fn find_wrap_container(&self, ws_id: NodeId, direction: Direction) -> Option<NodeId> {
+        let mut result: Option<NodeId> = None;
+        let mut current = Some(ws_id);
+        while let Some(cur) = current {
+            let node = self.get(cur)?;
+            let (focused, layout_opt, children_len) = match &node.data {
+                NodeData::Container { focused_child, layout, .. } => {
+                    (*focused_child, Some(*layout), node.children.len())
+                }
+                NodeData::Workspace { .. } => (0, None, node.children.len()),
+                _ => return result,
+            };
+            if let Some(layout) = layout_opt {
+                let is_parallel = matches!(
+                    (layout, direction),
+                    (Layout::SplitH, Direction::Left | Direction::Right)
+                    | (Layout::SplitV, Direction::Up | Direction::Down)
+                    | (Layout::Tabbed, Direction::Left | Direction::Right)
+                    | (Layout::Stacked, Direction::Up | Direction::Down)
+                );
+                if is_parallel && children_len > 1 {
+                    let at_boundary = match direction {
+                        Direction::Left | Direction::Up => focused == 0,
+                        Direction::Right | Direction::Down => focused + 1 >= children_len,
+                    };
+                    if at_boundary {
+                        result = Some(cur);
+                    }
+                }
+            }
+            let children = self.children(cur);
+            current = if focused < children.len() {
+                Some(children[focused])
+            } else if !children.is_empty() {
+                Some(children[0])
+            } else {
+                None
+            };
+        }
+        result
     }
 
     fn find_focused_container(&self, node_id: NodeId) -> Option<NodeId> {
@@ -1640,13 +2096,12 @@ impl Tree {
                 NodeData::Container {
                     layout,
                     sizes,
-                    focused_child,
+                    ..
                 } => {
                     let children: Vec<NodeId> = n.children.to_vec();
                     LayoutInfo::Split {
                         layout: *layout,
                         sizes: sizes.clone(),
-                        focused_child: *focused_child,
                         children,
                     }
                 }
@@ -1666,7 +2121,6 @@ impl Tree {
             LayoutInfo::Split {
                 layout,
                 sizes,
-                focused_child,
                 children,
             } => {
                 if children.is_empty() {
@@ -1680,9 +2134,10 @@ impl Tree {
                         self.layout_split_v(&children, &sizes, available, gaps);
                     }
                     Layout::Tabbed | Layout::Stacked => {
-                        let focus_idx = focused_child.min(children.len().saturating_sub(1));
-                        let focused_id = children[focus_idx];
-                        self.compute_layout(focused_id, available, gaps);
+                        // All children get the same area (only focused one is displayed)
+                        for &child in &children {
+                            self.compute_layout(child, available, gaps);
+                        }
                     }
                 }
             }
@@ -2279,30 +2734,23 @@ mod tests {
 
     #[test]
     fn wrap_container_preserves_position() {
-        // Bug fix: wrapping window B in [A | B | C] should produce [A | [B,D] | C]
-        // not [A | C | [B,D]]
+        // Sway workflow: wrapping window B in [A | B | C] via split+insert
+        // should produce [A | SplitV[B,D] | C] — not [A | C | SplitV[B,D]]
         let mut tree = make_ws_tree();
         tree.insert_window(1); // A
         tree.insert_window(2); // B
-        tree.insert_window(3); // C — now [A | B | C]
+        tree.insert_window(3); // C — now [A | B | C*]
 
-        // Focus B (index 1 in container)
+        // Focus B
+        tree.focus_window(2);
+
+        // Use split(SplitV) to wrap B, then insert D
+        tree.split(Layout::SplitV);
+        tree.insert_window(4); // D
+
+        // Check: top container should still have 3 children [A, nested, C]
         let ws = tree.focused_workspace().unwrap();
         let container = tree.children(ws)[0];
-        if let Some(node) = tree.get_mut(container) {
-            if let NodeData::Container {
-                ref mut focused_child,
-                ..
-            } = node.data
-            {
-                *focused_child = 1;
-            }
-        }
-
-        // Insert D with SplitV — should wrap B, not append to end
-        tree.insert_window_with_layout(4, Layout::SplitV);
-
-        // Check: container should still have 3 children [A, nested, C]
         let top_children = tree.children(container);
         assert_eq!(top_children.len(), 3, "top container should have 3 children");
 
@@ -2396,10 +2844,11 @@ mod tests {
     }
 
     #[test]
-    fn move_right_swaps_columns_not_rows() {
+    fn move_right_extracts_window_cross_container() {
         // SplitH [ SplitV[A,C], SplitV[B,D] ]
-        // Focus A, move right → SplitH [ SplitV[B,D], SplitV[A,C] ]
-        // (the whole column swaps, because A's ancestor at SplitH level is col1)
+        // Focus A, move right →
+        //   A is extracted from col1, inserted between col1 and col2
+        //   Result: SplitH [ SplitV[C], A, SplitV[B,D] ]
         let mut tree = Tree::new();
         let root = tree.root();
         let out = tree.add_node(root, output_data("eDP-1"));
@@ -2415,32 +2864,41 @@ mod tests {
         let col2 = tree.add_node(splith, NodeData::Container {
             layout: Layout::SplitV, sizes: vec![1.0, 1.0], focused_child: 0,
         });
-        tree.add_node(col1, window_data(1)); // A
+        let a = tree.add_node(col1, window_data(1)); // A
         tree.add_node(col1, window_data(3)); // C
         tree.add_node(col2, window_data(2)); // B
         tree.add_node(col2, window_data(4)); // D
 
-        // Focus on A, move right
+        // Focus on A, move right: cross-container extraction
         let moved = tree.move_window(Direction::Right);
         assert!(moved);
 
-        // SplitH children should now be [col2, col1] (columns swapped)
+        // SplitH should now have 3 children: [col1(only C), A, col2(B,D)]
         let h_children = tree.children(splith);
-        assert_eq!(h_children[0], col2, "col2 should now be first (left)");
-        assert_eq!(h_children[1], col1, "col1 should now be second (right)");
+        assert_eq!(h_children.len(), 3, "splith should have 3 children after cross-container move");
+        assert_eq!(h_children[0], col1, "col1 should still be first");
+        assert_eq!(h_children[1], a, "A should be extracted between col1 and col2");
+        assert_eq!(h_children[2], col2, "col2 should still be last");
+
+        // col1 should only have C now
+        let col1_children = tree.children(col1);
+        assert_eq!(col1_children.len(), 1, "col1 should have only C after A was extracted");
     }
 
     #[test]
-    fn different_split_direction_creates_nesting() {
-        // splitv after splith should create a nested container
+    fn split_then_insert_creates_nesting() {
+        // Sway workflow: split v + insert creates nesting
+        // SplitH [1 | 2*] → split v → SplitH [1 | SplitV[2*]]
+        //                  → insert 3 → SplitH [1 | SplitV[2, 3*]]
         let mut tree = make_ws_tree();
         tree.insert_window(1);
-        tree.insert_window(2); // default SplitH: [1 | 2]
+        tree.insert_window(2); // default SplitH: [1 | 2*]
 
-        // Now insert with SplitV — should nest under focused window
-        tree.insert_window_with_layout(3, Layout::SplitV);
+        // Use split to wrap focused window, then insert
+        tree.split(Layout::SplitV);
+        tree.insert_window(3);
 
-        // Tree should be: Container(SplitH) [ win1, Container(SplitV) [win2, win3] ]
+        // Tree should be: SplitH [ win1, SplitV [win2, win3] ]
         let ws = tree.focused_workspace().unwrap();
         let top_container = tree.children(ws)[0];
         let top_children = tree.children(top_container);

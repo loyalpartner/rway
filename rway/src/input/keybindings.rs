@@ -109,13 +109,14 @@ pub(crate) fn execute_action(state: &mut RwayState, action: &Action) {
             }
         }
         Action::Split(split_dir) => {
-            // Sway behavior: split h/v sets the direction for the NEXT window insertion,
-            // it does not immediately change the current container layout.
+            // Sway behavior: split h/v IMMEDIATELY wraps the focused window
+            // in a new container with the specified layout direction.
             let layout = match split_dir {
                 rway_config::SplitDirection::Horizontal => rway_tiling::Layout::SplitH,
                 rway_config::SplitDirection::Vertical => rway_tiling::Layout::SplitV,
             };
-            state.pending_split = Some(layout);
+            rway_tiling::commands::split(&mut state.tiling, layout);
+            state.relayout();
         }
         Action::Layout(layout_type) => {
             let layout = match layout_type {
