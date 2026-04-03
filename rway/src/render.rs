@@ -80,10 +80,7 @@ pub(crate) fn overlay_elements(
     // Borders
     solid.extend(border_elements(state, border_config, scale));
 
-    // Title bar backgrounds (solid color)
-    solid.extend(title_bar_bg_elements(state, border_config, scale));
-
-    // Title bar text (pre-rendered to MemoryRenderBuffer, needs renderer to materialize)
+    // Title bar text (pre-rendered to MemoryRenderBuffer with background color baked in)
     let text_buffers = title_bar_text_buffers(state, border_config);
 
     OverlayOutput {
@@ -224,10 +221,14 @@ fn title_bar_text_buffers(
         } else {
             (text_color_unfocused, bg_unfocused)
         };
-        let buf =
-            state
-                .text_renderer
-                .render_title(bar.window_id, &title, bar.rect, text_color, bg_color);
+        let buf = state.text_renderer.render_title(
+            bar.window_id,
+            &title,
+            bar.rect,
+            bar.focused,
+            text_color,
+            bg_color,
+        );
         result.push((buf.clone(), (bar.rect.x, bar.rect.y)));
     }
     result
@@ -251,43 +252,6 @@ fn get_window_title(state: &RwayState, window_id: u64) -> String {
             })
         })
         .unwrap_or_default()
-}
-
-/// Generate title bar background elements (solid color rectangles).
-fn title_bar_bg_elements(
-    state: &RwayState,
-    config: &BorderConfig,
-    scale: Scale<f64>,
-) -> Vec<SolidColorRenderElement> {
-    // Use cached title bars from relayout() — no per-frame tree traversal
-    let bars = &state.cached_title_bars;
-    if bars.is_empty() {
-        return vec![];
-    }
-
-    // Derive title bar colors from border config:
-    // focused tab uses focused border color, unfocused is dimmed
-    let focused_color = config.focused_color;
-    let uc = config.unfocused_color;
-    let unfocused_color = [uc[0] * 0.7, uc[1] * 0.7, uc[2] * 0.7, uc[3]];
-
-    bars.iter()
-        .map(|bar| {
-            let color = if bar.focused {
-                focused_color
-            } else {
-                unfocused_color
-            };
-            crate::border::make_border_element(
-                bar.rect.x,
-                bar.rect.y,
-                bar.rect.width,
-                bar.rect.height,
-                color,
-                scale,
-            )
-        })
-        .collect()
 }
 
 #[cfg(test)]

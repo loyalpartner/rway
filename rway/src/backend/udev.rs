@@ -1172,11 +1172,11 @@ fn render_surface(
     let text_elements =
         render::materialize_text_elements(&mut renderer, &overlay.text_buffers, scale);
 
-    // Compose: overlays (cursor + borders + title text) first, then space surfaces
+    // Compose: text on top, then solid overlays, then space surfaces
     let mut elements: Vec<UdevRenderElement<'_>> =
-        Vec::with_capacity(overlay.solid.len() + text_elements.len() + space_elements.len());
-    elements.extend(overlay.solid.into_iter().map(UdevRenderElement::Overlay));
+        Vec::with_capacity(text_elements.len() + overlay.solid.len() + space_elements.len());
     elements.extend(text_elements.into_iter().map(UdevRenderElement::Text));
+    elements.extend(overlay.solid.into_iter().map(UdevRenderElement::Overlay));
     elements.extend(space_elements.into_iter().map(UdevRenderElement::Space));
 
     let result = surface.drm_output.render_frame(

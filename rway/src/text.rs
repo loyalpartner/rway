@@ -98,6 +98,7 @@ struct CacheKey {
     title: String,
     width: i32,
     height: i32,
+    focused: bool,
 }
 
 /// Cached rendered title bar buffer.
@@ -134,6 +135,7 @@ impl TextRenderer {
         window_id: u64,
         title: &str,
         rect: Rect,
+        focused: bool,
         text_color: [u8; 4],
         bg_color: [u8; 4],
     ) -> &MemoryRenderBuffer {
@@ -142,6 +144,7 @@ impl TextRenderer {
             title: title.to_string(),
             width: rect.width,
             height: rect.height,
+            focused,
         };
 
         if !self.cache.contains_key(&key) {
@@ -193,6 +196,12 @@ impl TextRenderer {
             Some(width as f32),
             Some(height as f32),
         );
+
+        // Center text horizontally (Sway behavior)
+        for line in buffer.lines.iter_mut() {
+            line.set_align(Some(cosmic_text::Align::Center));
+        }
+
         buffer.shape_until_scroll(&mut self.font_system, false);
 
         // Rasterize glyphs onto pixel buffer
@@ -331,7 +340,8 @@ mod tests {
     fn text_renderer_creates_buffer() {
         let mut renderer = TextRenderer::new(FontConfig::default());
         let rect = Rect::new(0, 0, 200, 25);
-        let buf = renderer.render_title(1, "test", rect, [255, 255, 255, 255], [0, 0, 0, 255]);
+        let buf =
+            renderer.render_title(1, "test", rect, true, [255, 255, 255, 255], [0, 0, 0, 255]);
         // Just verify it returns without panicking
         let _ = buf;
     }
@@ -340,9 +350,9 @@ mod tests {
     fn text_renderer_caches() {
         let mut renderer = TextRenderer::new(FontConfig::default());
         let rect = Rect::new(0, 0, 200, 25);
-        renderer.render_title(1, "test", rect, [255, 255, 255, 255], [0, 0, 0, 255]);
+        renderer.render_title(1, "test", rect, true, [255, 255, 255, 255], [0, 0, 0, 255]);
         // Second call with same params should hit cache
-        renderer.render_title(1, "test", rect, [255, 255, 255, 255], [0, 0, 0, 255]);
+        renderer.render_title(1, "test", rect, true, [255, 255, 255, 255], [0, 0, 0, 255]);
         assert_eq!(renderer.cache.len(), 1);
     }
 
@@ -350,8 +360,22 @@ mod tests {
     fn text_renderer_invalidates_on_title_change() {
         let mut renderer = TextRenderer::new(FontConfig::default());
         let rect = Rect::new(0, 0, 200, 25);
-        renderer.render_title(1, "old title", rect, [255, 255, 255, 255], [0, 0, 0, 255]);
-        renderer.render_title(1, "new title", rect, [255, 255, 255, 255], [0, 0, 0, 255]);
+        renderer.render_title(
+            1,
+            "old title",
+            rect,
+            true,
+            [255, 255, 255, 255],
+            [0, 0, 0, 255],
+        );
+        renderer.render_title(
+            1,
+            "new title",
+            rect,
+            true,
+            [255, 255, 255, 255],
+            [0, 0, 0, 255],
+        );
         // Old entry removed, new entry present
         assert_eq!(renderer.cache.len(), 1);
         assert!(renderer.cache.keys().any(|k| k.title == "new title"));

@@ -61,11 +61,11 @@ impl WinitState {
             let text_elements =
                 render::materialize_text_elements(renderer, &overlay.text_buffers, scale);
 
-            // Combine solid + text into unified overlay elements
+            // Combine: text on top (title bars), then solid (borders, cursor)
             let mut custom_elements: Vec<WinitOverlayElement> =
                 Vec::with_capacity(overlay.solid.len() + text_elements.len());
-            custom_elements.extend(overlay.solid.into_iter().map(WinitOverlayElement::Solid));
             custom_elements.extend(text_elements.into_iter().map(WinitOverlayElement::Text));
+            custom_elements.extend(overlay.solid.into_iter().map(WinitOverlayElement::Solid));
 
             if let Err(e) = smithay::desktop::space::render_output::<_, WinitOverlayElement, _, _>(
                 &self.output,
