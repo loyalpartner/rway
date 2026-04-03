@@ -9,6 +9,8 @@ pub struct GapsConfig {
     pub inner: i32,
     /// Gap between windows and screen edges (pixels)
     pub outer: i32,
+    /// Height of each title bar in Tabbed/Stacked layouts (pixels)
+    pub title_bar_height: i32,
 }
 
 /// Focus movement direction
@@ -28,7 +30,7 @@ pub enum ResizeAxis {
 }
 
 /// Rectangle area describing a node's geometry and position
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -61,6 +63,17 @@ impl NodeId {
     pub fn index(self) -> usize {
         self.0
     }
+}
+
+/// Title bar metadata for Tabbed/Stacked containers
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TitleBar {
+    /// The window this title bar represents
+    pub window_id: u64,
+    /// Position and size of the title bar rectangle
+    pub rect: Rect,
+    /// Whether this is the focused (active) tab/stack entry
+    pub focused: bool,
 }
 
 /// Layout type, corresponding to i3/Sway's four container layouts
@@ -1158,7 +1171,9 @@ impl Tree {
     }
 
     /// Toggle focused container's layout type in cycle:
-    /// SplitH -> SplitV -> Tabbed -> Stacked -> SplitH
+    /// Sway `layout toggle split`: toggle between SplitH and SplitV only.
+    /// If current layout is Tabbed/Stacked, switches to the last used split
+    /// direction (defaults to SplitH).
     pub fn layout_toggle(&mut self) {
         let ws_id = match self.focused_workspace() {
             Some(id) => id,
@@ -1174,9 +1189,7 @@ impl Tree {
             Some(node) => match &node.data {
                 NodeData::Container { layout, .. } => match layout {
                     Layout::SplitH => Layout::SplitV,
-                    Layout::SplitV => Layout::Tabbed,
-                    Layout::Tabbed => Layout::Stacked,
-                    Layout::Stacked => Layout::SplitH,
+                    Layout::SplitV | Layout::Tabbed | Layout::Stacked => Layout::SplitH,
                 },
                 _ => return,
             },
@@ -1184,6 +1197,95 @@ impl Tree {
         };
 
         let _ = self.set_layout(container_id, next_layout);
+    }
+
+    /// Set the layout of the focused window's parent container (Sway `layout` command).
+    /// Unlike `split()`, this does NOT create a new container — it changes
+    /// the existing parent container's layout in place.
+    ///
+    /// Before changing the layout, collapses any single-child containers on
+    /// the focused path. This cleans up leftover nesting from previous
+    /// `split()` operations (e.g. `SplitH [Tabbed[win1], win2]` → `SplitH [win1, win2]`).
+    pub fn set_focused_layout(&mut self, layout: Layout) {
+        let ws_id = match self.focused_workspace() {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Collapse single-child containers first to normalize the tree
+        self.collapse_single_child_containers(ws_id);
+
+        let container_id = match self.find_focused_container(ws_id) {
+            Some(id) => id,
+            None => return,
+        };
+
+        let _ = self.set_layout(container_id, layout);
+    }
+
+    /// Collapse containers that have exactly one child which is also a container,
+    /// by absorbing the inner container's children and layout into the outer one.
+    /// Removes unnecessary nesting from prior `split()` operations.
+    ///
+    /// Example: `SplitH [Tabbed[win1], win2]` → after collapsing the Tabbed
+    /// (single-child container wrapping win1), becomes `SplitH [win1, win2]`.
+    fn collapse_single_child_containers(&mut self, node_id: NodeId) {
+        // Recurse into children first (bottom-up collapse)
+        let children: Vec<NodeId> = self.children(node_id).to_vec();
+        for &child in &children {
+            self.collapse_single_child_containers(child);
+        }
+
+        // Check: is this a container with exactly one child that is also a container?
+        let only_child = match self.get(node_id) {
+            Some(n) if matches!(n.data, NodeData::Container { .. }) && n.children.len() == 1 => {
+                n.children[0]
+            }
+            _ => return,
+        };
+
+        // Extract inner container's data before mutating
+        let inner_info = match self.get(only_child) {
+            Some(n) => match &n.data {
+                NodeData::Container {
+                    layout,
+                    sizes,
+                    focused_child,
+                } => Some((*layout, sizes.clone(), *focused_child)),
+                _ => return, // child is a window, not a redundant wrapper — keep it
+            },
+            None => return,
+        };
+
+        let Some((inner_layout, inner_sizes, inner_focused)) = inner_info else {
+            return;
+        };
+
+        // Absorb: move grandchildren up into this node, adopt inner layout
+        let grandchildren: Vec<NodeId> = self.children(only_child).to_vec();
+
+        // Detach grandchildren from only_child so remove_node won't cascade
+        if let Some(child_node) = self.get_mut(only_child) {
+            child_node.children.clear();
+        }
+        self.remove_node(only_child);
+
+        // Replace this node's children and layout with the inner container's
+        if let Some(node) = self.get_mut(node_id) {
+            node.children = grandchildren.clone();
+            node.data = NodeData::Container {
+                layout: inner_layout,
+                sizes: inner_sizes,
+                focused_child: inner_focused,
+            };
+        }
+
+        // Reparent grandchildren
+        for &gc in &grandchildren {
+            if let Some(gc_node) = self.get_mut(gc) {
+                gc_node.parent = Some(node_id);
+            }
+        }
     }
 
     /// Set window sticky flag
@@ -2247,9 +2349,26 @@ impl Tree {
                     Layout::SplitV => {
                         self.layout_split_v(&tiled_children, &tiled_sizes, available, gaps);
                     }
-                    Layout::Tabbed | Layout::Stacked => {
+                    Layout::Tabbed => {
+                        let title_h = gaps.title_bar_height;
+                        let child_area = Rect {
+                            y: available.y + title_h,
+                            height: (available.height - title_h).max(1),
+                            ..available
+                        };
                         for &child in &tiled_children {
-                            self.compute_layout(child, available, gaps);
+                            self.compute_layout(child, child_area, gaps);
+                        }
+                    }
+                    Layout::Stacked => {
+                        let title_h = gaps.title_bar_height * tiled_children.len() as i32;
+                        let child_area = Rect {
+                            y: available.y + title_h,
+                            height: (available.height - title_h).max(1),
+                            ..available
+                        };
+                        for &child in &tiled_children {
+                            self.compute_layout(child, child_area, gaps);
                         }
                     }
                 }
@@ -2290,6 +2409,158 @@ impl Tree {
         let mut result = Vec::new();
         self.collect_windows(self.root(), &mut result);
         result
+    }
+
+    /// Compute title bar rectangles for all Tabbed/Stacked containers.
+    /// Must be called after `compute_layout()`.
+    pub fn title_bars(&self, gaps: &GapsConfig) -> Vec<TitleBar> {
+        let mut result = Vec::new();
+        self.collect_title_bars(self.root(), gaps, &mut result);
+        result
+    }
+
+    fn collect_title_bars(&self, node_id: NodeId, gaps: &GapsConfig, out: &mut Vec<TitleBar>) {
+        let Some(node) = self.get(node_id) else {
+            return;
+        };
+
+        match &node.data {
+            NodeData::Container {
+                layout,
+                focused_child,
+                ..
+            } => {
+                let children: Vec<NodeId> = node.children.clone();
+                let layout = *layout;
+                let focused_idx = *focused_child;
+
+                if matches!(layout, Layout::Tabbed | Layout::Stacked) {
+                    if let Some(first_geom) = self.first_child_geometry(&children) {
+                        let n = children.len() as i32;
+                        let th = gaps.title_bar_height;
+                        let total_title_h = match layout {
+                            Layout::Tabbed => th,
+                            _ => th * n, // Stacked
+                        };
+                        let container_x = first_geom.x;
+                        let container_y = first_geom.y - total_title_h;
+                        let container_w = first_geom.width;
+
+                        for (i, &child) in children.iter().enumerate() {
+                            if let Some(wid) = self.leaf_window_id(child) {
+                                let rect = match layout {
+                                    Layout::Tabbed => {
+                                        let tab_w = container_w / n.max(1);
+                                        let w = if (i as i32) < n - 1 {
+                                            tab_w
+                                        } else {
+                                            container_w - tab_w * (n - 1)
+                                        };
+                                        Rect::new(
+                                            container_x + tab_w * i as i32,
+                                            container_y,
+                                            w,
+                                            th,
+                                        )
+                                    }
+                                    _ => Rect::new(
+                                        container_x,
+                                        container_y + th * i as i32,
+                                        container_w,
+                                        th,
+                                    ),
+                                };
+                                out.push(TitleBar {
+                                    window_id: wid,
+                                    rect,
+                                    focused: i == focused_idx,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Recurse into children for nested containers
+                for &child in &children {
+                    self.collect_title_bars(child, gaps, out);
+                }
+            }
+            NodeData::Root | NodeData::Output { .. } | NodeData::Workspace { .. } => {
+                let children: Vec<NodeId> = node.children.clone();
+                for &child in &children {
+                    self.collect_title_bars(child, gaps, out);
+                }
+            }
+            NodeData::Window { .. } => {}
+        }
+    }
+
+    /// Get geometry of the first child window (leaf) in a container
+    fn first_child_geometry(&self, children: &[NodeId]) -> Option<Rect> {
+        for &child in children {
+            if let Some(g) = self.leaf_geometry(child) {
+                return Some(g);
+            }
+        }
+        None
+    }
+
+    /// Get geometry of a leaf window, or the first leaf in a container
+    fn leaf_geometry(&self, node_id: NodeId) -> Option<Rect> {
+        let node = self.get(node_id)?;
+        match &node.data {
+            NodeData::Window { geometry, .. } => Some(*geometry),
+            NodeData::Container { .. } => {
+                for &child in &node.children {
+                    if let Some(g) = self.leaf_geometry(child) {
+                        return Some(g);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the window_id of a leaf, or the focused leaf of a container
+    fn leaf_window_id(&self, node_id: NodeId) -> Option<u64> {
+        let node = self.get(node_id)?;
+        match &node.data {
+            NodeData::Window { window_id, .. } => Some(*window_id),
+            NodeData::Container { focused_child, .. } => {
+                let child = node.children.get(*focused_child)?;
+                self.leaf_window_id(*child)
+            }
+            _ => None,
+        }
+    }
+
+    /// Check whether a window is visible (not hidden behind another tab/stack).
+    /// A window is hidden if it's a non-focused child of any Tabbed/Stacked ancestor.
+    pub fn is_visible(&self, window_id: u64) -> bool {
+        let Some(node_id) = self.find_node_by_window_id(window_id) else {
+            return false;
+        };
+        let mut current = node_id;
+        while let Some(parent) = self.parent(current) {
+            if let Some(node) = self.get(parent) {
+                if let NodeData::Container {
+                    layout,
+                    focused_child,
+                    ..
+                } = &node.data
+                {
+                    if matches!(layout, Layout::Tabbed | Layout::Stacked) {
+                        let children = &node.children;
+                        if children.get(*focused_child) != Some(&current) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            current = parent;
+        }
+        true
     }
 
     fn layout_split_h(
@@ -3097,5 +3368,382 @@ mod tests {
                 .unwrap_or(false)
         });
         assert!(nested.is_some(), "should have a nested SplitV container");
+    }
+
+    // ── Tabbed/Stacked layout geometry tests ──────────────────
+
+    fn gaps_with_title_bar(height: i32) -> GapsConfig {
+        GapsConfig {
+            inner: 0,
+            outer: 0,
+            title_bar_height: height,
+        }
+    }
+
+    #[test]
+    fn tabbed_layout_reserves_one_title_bar() {
+        // Tabbed: 1 title bar at top, all children share remaining space
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+        tree.insert_window(3);
+
+        // Change to tabbed layout
+        let ws = tree.focused_workspace().unwrap();
+        let container = tree.children(ws)[0];
+        tree.set_layout(container, Layout::Tabbed).unwrap();
+
+        let gaps = gaps_with_title_bar(25);
+        tree.compute_layout(tree.root(), sample_rect(), &gaps);
+        let geoms = tree.window_geometries();
+
+        // All 3 windows should have geometry computed
+        assert_eq!(geoms.len(), 3, "all children should have geometry");
+
+        for (_, g) in &geoms {
+            assert_eq!(g.y, 25, "window y should start below title bar");
+            assert_eq!(
+                g.height,
+                1080 - 25,
+                "window height should exclude title bar"
+            );
+            assert_eq!(g.width, 1920, "window should span full width");
+        }
+    }
+
+    #[test]
+    fn stacked_layout_reserves_n_title_bars() {
+        // Stacked: N title bars at top (one per child), children below
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+        tree.insert_window(3);
+
+        let ws = tree.focused_workspace().unwrap();
+        let container = tree.children(ws)[0];
+        tree.set_layout(container, Layout::Stacked).unwrap();
+
+        let gaps = gaps_with_title_bar(25);
+        tree.compute_layout(tree.root(), sample_rect(), &gaps);
+        let geoms = tree.window_geometries();
+
+        assert_eq!(geoms.len(), 3, "all children should have geometry");
+
+        let title_area = 25 * 3; // 3 children × 25px each
+        for (_, g) in &geoms {
+            assert_eq!(
+                g.y, title_area,
+                "window y should start below all title bars"
+            );
+            assert_eq!(
+                g.height,
+                1080 - title_area,
+                "window height should exclude all title bars"
+            );
+            assert_eq!(g.width, 1920, "window should span full width");
+        }
+    }
+
+    #[test]
+    fn tabbed_focus_left_right_cycles() {
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+        tree.insert_window(3);
+
+        let ws = tree.focused_workspace().unwrap();
+        let container = tree.children(ws)[0];
+        tree.set_layout(container, Layout::Tabbed).unwrap();
+
+        // Focus is on window 3 (last inserted)
+        assert_eq!(tree.focused_window_id(), Some(3));
+
+        // Left → window 2
+        assert!(tree.move_focus(Direction::Left));
+        assert_eq!(tree.focused_window_id(), Some(2));
+
+        // Left → window 1
+        assert!(tree.move_focus(Direction::Left));
+        assert_eq!(tree.focused_window_id(), Some(1));
+
+        // Right → window 2
+        assert!(tree.move_focus(Direction::Right));
+        assert_eq!(tree.focused_window_id(), Some(2));
+    }
+
+    #[test]
+    fn stacked_focus_up_down_cycles() {
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+        tree.insert_window(3);
+
+        let ws = tree.focused_workspace().unwrap();
+        let container = tree.children(ws)[0];
+        tree.set_layout(container, Layout::Stacked).unwrap();
+
+        assert_eq!(tree.focused_window_id(), Some(3));
+
+        // Up → window 2
+        assert!(tree.move_focus(Direction::Up));
+        assert_eq!(tree.focused_window_id(), Some(2));
+
+        // Up → window 1
+        assert!(tree.move_focus(Direction::Up));
+        assert_eq!(tree.focused_window_id(), Some(1));
+
+        // Down → window 2
+        assert!(tree.move_focus(Direction::Down));
+        assert_eq!(tree.focused_window_id(), Some(2));
+    }
+
+    #[test]
+    fn tabbed_zero_title_bar_height_gives_full_space() {
+        // When title_bar_height = 0, tabbed behaves like before
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+
+        let ws = tree.focused_workspace().unwrap();
+        let container = tree.children(ws)[0];
+        tree.set_layout(container, Layout::Tabbed).unwrap();
+
+        let gaps = GapsConfig::default(); // title_bar_height = 0
+        tree.compute_layout(tree.root(), sample_rect(), &gaps);
+        let geoms = tree.window_geometries();
+
+        for (_, g) in &geoms {
+            assert_eq!(g.y, 0);
+            assert_eq!(g.height, 1080);
+        }
+    }
+
+    // ── Title bar and visibility tests ────────────────────────
+
+    #[test]
+    fn tabbed_title_bars_side_by_side() {
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+        tree.insert_window(3);
+
+        let ws = tree.focused_workspace().unwrap();
+        let container = tree.children(ws)[0];
+        tree.set_layout(container, Layout::Tabbed).unwrap();
+
+        let gaps = gaps_with_title_bar(25);
+        tree.compute_layout(tree.root(), sample_rect(), &gaps);
+        let bars = tree.title_bars(&gaps);
+
+        assert_eq!(bars.len(), 3, "3 windows = 3 title bars");
+
+        // Each tab: width = 1920/3 = 640, height = 25
+        let tab_width = 1920 / 3;
+        for (i, bar) in bars.iter().enumerate() {
+            assert_eq!(bar.rect.y, 0, "title bars at top");
+            assert_eq!(bar.rect.height, 25);
+            assert_eq!(bar.rect.x, (tab_width * i as i32), "tab {i} x offset");
+            assert!(bar.rect.width > 0);
+        }
+
+        // Window 3 is focused (last inserted)
+        let focused_count = bars.iter().filter(|b| b.focused).count();
+        assert_eq!(focused_count, 1, "exactly one focused tab");
+        assert_eq!(bars.iter().find(|b| b.focused).unwrap().window_id, 3);
+    }
+
+    #[test]
+    fn stacked_title_bars_vertically() {
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+        tree.insert_window(3);
+
+        let ws = tree.focused_workspace().unwrap();
+        let container = tree.children(ws)[0];
+        tree.set_layout(container, Layout::Stacked).unwrap();
+
+        let gaps = gaps_with_title_bar(25);
+        tree.compute_layout(tree.root(), sample_rect(), &gaps);
+        let bars = tree.title_bars(&gaps);
+
+        assert_eq!(bars.len(), 3, "3 windows = 3 title bars");
+
+        // Each bar: full width, stacked vertically
+        for (i, bar) in bars.iter().enumerate() {
+            assert_eq!(bar.rect.x, 0);
+            assert_eq!(bar.rect.y, 25 * i as i32, "bar {i} y offset");
+            assert_eq!(bar.rect.width, 1920);
+            assert_eq!(bar.rect.height, 25);
+        }
+
+        let focused_count = bars.iter().filter(|b| b.focused).count();
+        assert_eq!(focused_count, 1);
+        assert_eq!(bars.iter().find(|b| b.focused).unwrap().window_id, 3);
+    }
+
+    #[test]
+    fn is_visible_focused_child_only() {
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+        tree.insert_window(3);
+
+        let ws = tree.focused_workspace().unwrap();
+        let container = tree.children(ws)[0];
+        tree.set_layout(container, Layout::Tabbed).unwrap();
+
+        // Window 3 is focused → visible; 1, 2 are hidden
+        assert!(tree.is_visible(3), "focused child should be visible");
+        assert!(!tree.is_visible(1), "non-focused should be hidden");
+        assert!(!tree.is_visible(2), "non-focused should be hidden");
+
+        // Switch focus to window 1
+        tree.move_focus(Direction::Left); // 3→2
+        tree.move_focus(Direction::Left); // 2→1
+        assert!(tree.is_visible(1));
+        assert!(!tree.is_visible(2));
+        assert!(!tree.is_visible(3));
+    }
+
+    #[test]
+    fn is_visible_split_all_visible() {
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+
+        // Default SplitH — all windows visible
+        assert!(tree.is_visible(1));
+        assert!(tree.is_visible(2));
+    }
+
+    #[test]
+    fn no_title_bars_for_split_layouts() {
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+
+        let gaps = gaps_with_title_bar(25);
+        tree.compute_layout(tree.root(), sample_rect(), &gaps);
+        let bars = tree.title_bars(&gaps);
+
+        assert!(bars.is_empty(), "SplitH should have no title bars");
+    }
+
+    // ── layout command (set_layout on parent) vs split command ───
+
+    #[test]
+    fn set_focused_layout_changes_parent_container() {
+        // Sway `layout tabbed`: changes the parent container's layout,
+        // does NOT wrap the window in a new container.
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+        tree.insert_window(3);
+
+        // Before: SplitH container with 3 children [1, 2, 3*]
+        let ws = tree.focused_workspace().unwrap();
+        let container = tree.children(ws)[0];
+        assert_eq!(tree.children(container).len(), 3);
+
+        // `layout tabbed` should change existing container to Tabbed
+        tree.set_focused_layout(Layout::Tabbed);
+
+        // After: SAME container, still 3 children, but now Tabbed
+        let container = tree.children(ws)[0];
+        assert_eq!(
+            tree.children(container).len(),
+            3,
+            "children count must not change"
+        );
+        let node = tree.get(container).unwrap();
+        assert!(
+            matches!(
+                node.data,
+                NodeData::Container {
+                    layout: Layout::Tabbed,
+                    ..
+                }
+            ),
+            "layout should be Tabbed"
+        );
+
+        // All 3 windows should be navigable as tabs
+        assert_eq!(tree.focused_window_id(), Some(3));
+        tree.move_focus(Direction::Left);
+        assert_eq!(tree.focused_window_id(), Some(2));
+        tree.move_focus(Direction::Left);
+        assert_eq!(tree.focused_window_id(), Some(1));
+    }
+
+    #[test]
+    fn set_focused_layout_new_window_becomes_tab() {
+        // After `layout tabbed`, inserting a new window should become a tab
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2);
+
+        tree.set_focused_layout(Layout::Tabbed);
+
+        // Insert window 3 — should become a tab in the same container
+        tree.insert_window(3);
+
+        let ws = tree.focused_workspace().unwrap();
+        let container = tree.children(ws)[0];
+        assert_eq!(
+            tree.children(container).len(),
+            3,
+            "new window should be a sibling tab"
+        );
+        let node = tree.get(container).unwrap();
+        assert!(matches!(
+            node.data,
+            NodeData::Container {
+                layout: Layout::Tabbed,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn tabbed_focused_window_gets_full_width_geometry() {
+        // Exact user flow: 2 windows in SplitH → layout tabbed → relayout
+        // The focused window must get FULL container width
+        let mut tree = make_ws_tree();
+        tree.insert_window(1);
+        tree.insert_window(2); // focused: win2 (index 1)
+
+        // Before: SplitH, each window gets half width
+        let gaps = gaps_with_title_bar(25);
+        tree.compute_layout(tree.root(), sample_rect(), &gaps);
+        let geoms_before = tree.window_geometries();
+        let w2_before = geoms_before.iter().find(|(id, _)| *id == 2).unwrap().1;
+        assert_eq!(w2_before.width, 960, "SplitH: each window half width");
+
+        // User presses $mod+w (layout tabbed)
+        tree.set_focused_layout(Layout::Tabbed);
+
+        // Recompute layout
+        tree.compute_layout(tree.root(), sample_rect(), &gaps);
+        let geoms_after = tree.window_geometries();
+
+        // win2 (focused) should get FULL width = 1920
+        let w2_after = geoms_after.iter().find(|(id, _)| *id == 2).unwrap().1;
+        assert_eq!(w2_after.width, 1920, "Tabbed: focused window FULL width");
+        assert_eq!(w2_after.x, 0, "Tabbed: starts at x=0");
+        assert_eq!(w2_after.y, 25, "Tabbed: below title bar");
+        assert_eq!(
+            w2_after.height,
+            1080 - 25,
+            "Tabbed: full height minus title bar"
+        );
+
+        // win1 (hidden) should also have full width geometry
+        let w1_after = geoms_after.iter().find(|(id, _)| *id == 1).unwrap().1;
+        assert_eq!(w1_after.width, 1920, "Tabbed: hidden tab also full width");
+
+        // Visibility
+        assert!(tree.is_visible(2), "focused tab visible");
+        assert!(!tree.is_visible(1), "non-focused tab hidden");
     }
 }

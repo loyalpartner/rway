@@ -306,6 +306,7 @@ fn test_gaps_visual() -> TestStatus {
     let gaps = rway_tiling::GapsConfig {
         inner: 10,
         outer: 20,
+        ..Default::default()
     };
     rway_tiling::layout::compute_layout(&mut tree, root, screen, &gaps);
 
@@ -333,6 +334,7 @@ fn test_gaps_inner_outer_combined() -> TestStatus {
     let gaps = rway_tiling::GapsConfig {
         inner: 10,
         outer: 20,
+        ..Default::default()
     };
     let root = tree.root();
     rway_tiling::layout::compute_layout(&mut tree, root, screen, &gaps);

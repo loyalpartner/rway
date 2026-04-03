@@ -87,6 +87,9 @@ pub struct RwayState {
     // Animation manager
     pub(crate) animations: AnimationManager,
 
+    // Cached set of visible window IDs (updated in relayout, consumed in update_animations)
+    pub(crate) visible_windows: std::collections::HashSet<u64>,
+
     // Cursor state (updated by client via SeatHandler::cursor_image callback)
     pub(crate) cursor_status: CursorImageStatus,
 
@@ -229,6 +232,7 @@ impl RwayState {
             output_node: None,
 
             animations,
+            visible_windows: std::collections::HashSet::new(),
 
             cursor_status: CursorImageStatus::default_named(),
 
@@ -284,6 +288,18 @@ impl RwayState {
         }
     }
 
+    /// Default title bar height when not configured (pixels).
+    const DEFAULT_TITLE_BAR_HEIGHT: i32 = 25;
+
+    /// Build tiling GapsConfig from current config values.
+    pub(crate) fn gaps_config(&self) -> rway_tiling::GapsConfig {
+        rway_tiling::GapsConfig {
+            inner: self.config.gaps.inner as i32,
+            outer: self.config.gaps.outer as i32,
+            title_bar_height: Self::DEFAULT_TITLE_BAR_HEIGHT,
+        }
+    }
+
     /// 重新计算平铺布局并更新 Space 中窗口的位置和大小
     pub fn relayout(&mut self) {
         // 获取输出的非 exclusive 区域（扣除 waybar 等 layer shell 客户端占用的空间）
@@ -303,10 +319,7 @@ impl RwayState {
 
         // 计算布局（从配置读取 gaps）
         let root = self.tiling.root();
-        let gaps = rway_tiling::GapsConfig {
-            inner: self.config.gaps.inner as i32,
-            outer: self.config.gaps.outer as i32,
-        };
+        let gaps = self.gaps_config();
         layout::compute_layout(&mut self.tiling, root, available, &gaps);
 
         // Border width: window content is inset by this amount on each side
@@ -316,15 +329,41 @@ impl RwayState {
         let geometries = layout::get_window_geometries(&self.tiling);
         let mut raised_windows: Vec<Window> = Vec::new();
 
+        // Rebuild visibility cache once per relayout (O(N×depth)),
+        // so update_animations() can check O(1) per window per frame.
+        self.visible_windows.clear();
+        for &(wid, _) in &geometries {
+            if self.tiling.is_visible(wid) {
+                self.visible_windows.insert(wid);
+            }
+        }
+
         for (window_id, rect) in geometries {
             let is_fs = self.tiling.is_fullscreen(window_id);
             let is_float = self.tiling.is_floating(window_id);
             let is_special = is_fs || is_float;
+            let visible = self.visible_windows.contains(&window_id);
+
+            tracing::debug!(
+                window_id,
+                visible,
+                x = rect.x,
+                y = rect.y,
+                w = rect.width,
+                h = rect.height,
+                "relayout window geometry"
+            );
 
             self.animations
                 .set_target(window_id, rect.x, rect.y, rect.width, rect.height);
 
             if let Some(window) = self.window_map.get(&window_id) {
+                // Hide non-visible windows (non-focused children in Tabbed/Stacked)
+                if !visible {
+                    self.space.unmap_elem(window);
+                    continue;
+                }
+
                 // Fullscreen/floating: no tiling border offset
                 // Normal tiled: inset by border_width on each side
                 let map_bw = if is_special { 0 } else { bw };
@@ -344,10 +383,12 @@ impl RwayState {
                     toplevel.send_pending_configure();
                 }
 
-                if let Some((x, y, _w, _h)) = self.animations.get_position(window_id) {
-                    self.space
-                        .map_element(window.clone(), (x + map_bw, y + map_bw), false);
-                }
+                // Use tiling engine geometry directly for positioning.
+                // Animation positions lag behind (set_target doesn't update
+                // current_positions until tick), causing Tabbed/Stacked windows
+                // to appear at their old SplitH/V positions.
+                self.space
+                    .map_element(window.clone(), (rect.x + map_bw, rect.y + map_bw), false);
 
                 // Floating and fullscreen windows are raised above tiled
                 if is_special {
@@ -445,9 +486,14 @@ impl RwayState {
         // Normal tiled: inset by border_width.
         let mut raised: Vec<Window> = Vec::new();
         for (&window_id, window) in &self.window_map {
+            // Skip non-visible windows (hidden tabs in Tabbed/Stacked).
+            // Uses cached set from relayout() — O(1) instead of per-frame tree walk.
+            if !self.visible_windows.contains(&window_id) {
+                continue;
+            }
             if let Some((x, y, _w, _h)) = self.animations.get_position(window_id) {
-                let is_special = self.tiling.is_fullscreen(window_id)
-                    || self.tiling.is_floating(window_id);
+                let is_special =
+                    self.tiling.is_fullscreen(window_id) || self.tiling.is_floating(window_id);
                 let offset = if is_special { 0 } else { bw };
                 self.space
                     .map_element(window.clone(), (x + offset, y + offset), false);

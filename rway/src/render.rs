@@ -70,6 +70,9 @@ pub(crate) fn overlay_elements(
     // Borders
     elements.extend(border_elements(state, border_config, scale));
 
+    // Title bars for Tabbed/Stacked containers
+    elements.extend(title_bar_elements(state, border_config, scale));
+
     elements
 }
 
@@ -138,6 +141,43 @@ fn border_elements(
             );
 
             crate::border::window_borders(container_geo, color, bw, scale)
+        })
+        .collect()
+}
+
+/// Generate title bar elements for Tabbed/Stacked containers.
+fn title_bar_elements(
+    state: &RwayState,
+    config: &BorderConfig,
+    scale: Scale<f64>,
+) -> Vec<SolidColorRenderElement> {
+    let gaps = state.gaps_config();
+    let bars = state.tiling.title_bars(&gaps);
+    if bars.is_empty() {
+        return vec![];
+    }
+
+    // Derive title bar colors from border config:
+    // focused tab uses focused border color, unfocused is dimmed
+    let focused_color = config.focused_color;
+    let uc = config.unfocused_color;
+    let unfocused_color = [uc[0] * 0.7, uc[1] * 0.7, uc[2] * 0.7, uc[3]];
+
+    bars.iter()
+        .map(|bar| {
+            let color = if bar.focused {
+                focused_color
+            } else {
+                unfocused_color
+            };
+            crate::border::make_border_element(
+                bar.rect.x,
+                bar.rect.y,
+                bar.rect.width,
+                bar.rect.height,
+                color,
+                scale,
+            )
         })
         .collect()
 }

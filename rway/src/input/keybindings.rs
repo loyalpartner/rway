@@ -39,7 +39,8 @@ pub(crate) fn execute_action(state: &mut RwayState, action: &Action) {
         Action::Focus(dir) => {
             let direction = config_dir_to_tiling(dir);
             rway_tiling::commands::move_focus(&mut state.tiling, direction);
-            // 更新 Smithay 键盘焦点到平铺树的聚焦窗口
+            // Tabbed/Stacked: relayout to show/hide the correct tab
+            state.relayout();
             update_keyboard_focus(state);
         }
         Action::Move(dir) => {
@@ -119,14 +120,20 @@ pub(crate) fn execute_action(state: &mut RwayState, action: &Action) {
             state.relayout();
         }
         Action::Layout(layout_type) => {
-            let layout = match layout_type {
-                rway_config::LayoutType::SplitH => rway_tiling::Layout::SplitH,
-                rway_config::LayoutType::SplitV => rway_tiling::Layout::SplitV,
-                rway_config::LayoutType::Tabbed => rway_tiling::Layout::Tabbed,
-                rway_config::LayoutType::Stacked => rway_tiling::Layout::Stacked,
-                rway_config::LayoutType::Toggle => rway_tiling::Layout::SplitH, // TODO: toggle
-            };
-            rway_tiling::commands::split(&mut state.tiling, layout);
+            if matches!(layout_type, rway_config::LayoutType::Toggle) {
+                rway_tiling::commands::layout_toggle(&mut state.tiling);
+            } else {
+                let layout = match layout_type {
+                    rway_config::LayoutType::SplitH => rway_tiling::Layout::SplitH,
+                    rway_config::LayoutType::SplitV => rway_tiling::Layout::SplitV,
+                    rway_config::LayoutType::Tabbed => rway_tiling::Layout::Tabbed,
+                    rway_config::LayoutType::Stacked => rway_tiling::Layout::Stacked,
+                    rway_config::LayoutType::Toggle => unreachable!(),
+                };
+                tracing::debug!(?layout, "layout command: set_focused_layout");
+                rway_tiling::commands::set_focused_layout(&mut state.tiling, layout);
+            }
+            tracing::debug!("layout command: calling relayout");
             state.relayout();
         }
         Action::Kill => {

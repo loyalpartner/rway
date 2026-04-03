@@ -77,6 +77,10 @@ pub fn layout_toggle(tree: &mut Tree) {
     tree.layout_toggle()
 }
 
+pub fn set_focused_layout(tree: &mut Tree, layout: Layout) {
+    tree.set_focused_layout(layout)
+}
+
 pub fn set_sticky(tree: &mut Tree, window_id: u64, enable: bool) -> bool {
     tree.set_sticky(window_id, enable)
 }

@@ -133,8 +133,9 @@ pub(crate) fn window_borders(
     ]
 }
 
-/// Create a single border render element from logical coordinates.
-fn make_border_element(
+/// Create a single solid color render element from logical coordinates.
+/// Used for border edges, title bar backgrounds, and other solid-color overlays.
+pub(crate) fn make_border_element(
     lx: i32,
     ly: i32,
     lw: i32,
