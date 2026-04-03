@@ -624,13 +624,84 @@ impl Tree {
         self.find_focused_leaf(ws_id)
     }
 
-    /// Move the focused window in the given direction
+    /// Move the focused window in the given direction (Sway behavior).
+    ///
+    /// Finds the actually-focused leaf window, then swaps it with its
+    /// neighbor in the parent container that matches the direction axis.
     pub fn move_window(&mut self, direction: Direction) -> bool {
+        // 1. Find the focused leaf window node
         let ws_id = match self.focused_workspace() {
             Some(id) => id,
             None => return false,
         };
-        self.move_window_in(ws_id, direction)
+        let leaf_id = match self.find_focused_leaf_node(ws_id) {
+            Some(id) => id,
+            None => return false,
+        };
+
+        // 2. Walk up from the leaf to find the nearest container whose layout
+        //    matches the direction axis (SplitH for Left/Right, SplitV for Up/Down)
+        let mut current = leaf_id;
+        loop {
+            let parent_id = match self.parent(current) {
+                Some(id) => id,
+                None => return false,
+            };
+
+            let parent_info = match self.get(parent_id) {
+                Some(n) => match &n.data {
+                    NodeData::Container { layout, .. } => Some((*layout, n.children.to_vec())),
+                    NodeData::Workspace { .. } => None,
+                    _ => None,
+                },
+                None => return false,
+            };
+
+            let Some((layout, children)) = parent_info else {
+                return false; // reached workspace without finding matching container
+            };
+
+            let axis_matches = matches!(
+                (layout, direction),
+                (Layout::SplitH, Direction::Left | Direction::Right)
+                    | (Layout::SplitV, Direction::Up | Direction::Down)
+            );
+
+            if axis_matches {
+                // Found the right container — swap `current` with its neighbor
+                let Some(idx) = children.iter().position(|&c| c == current) else {
+                    return false;
+                };
+
+                let new_pos = match direction {
+                    Direction::Left | Direction::Up => {
+                        if idx > 0 { idx - 1 } else { return false; }
+                    }
+                    Direction::Right | Direction::Down => {
+                        if idx + 1 < children.len() { idx + 1 } else { return false; }
+                    }
+                };
+
+                if let Some(node) = self.get_mut(parent_id) {
+                    node.children.swap(idx, new_pos);
+                    if let NodeData::Container {
+                        ref mut sizes,
+                        ref mut focused_child,
+                        ..
+                    } = node.data
+                    {
+                        if idx < sizes.len() && new_pos < sizes.len() {
+                            sizes.swap(idx, new_pos);
+                        }
+                        *focused_child = new_pos;
+                    }
+                }
+                return true;
+            }
+
+            // This container's axis doesn't match — walk up
+            current = parent_id;
+        }
     }
 
     /// Move the focused window to the target workspace
@@ -1460,109 +1531,7 @@ impl Tree {
         }
     }
 
-    /// Move the focused LEAF window in the given direction.
-    ///
-    /// Sway behavior: only the focused window moves, not entire containers.
-    /// At the same container level, swap with the adjacent sibling.
-    fn move_window_in(&mut self, node_id: NodeId, direction: Direction) -> bool {
-        // Extract node info
-        let info = match self.get(node_id) {
-            Some(n) => match &n.data {
-                NodeData::Container {
-                    layout,
-                    focused_child,
-                    ..
-                } => Some(('c', *layout, *focused_child, n.children.to_vec())),
-                NodeData::Workspace { .. } => {
-                    Some(('w', Layout::SplitH, 0, n.children.to_vec()))
-                }
-                _ => None,
-            },
-            None => None,
-        };
-
-        match info {
-            Some(('c', layout, focused, children)) => {
-                // First, try to recurse into the focused child
-                if let Some(&focused_id) = children.get(focused) {
-                    if self.move_window_in(focused_id, direction) {
-                        return true;
-                    }
-                }
-
-                // Find the focused LEAF window node in this container
-                let focused_leaf = children
-                    .get(focused)
-                    .and_then(|&id| self.find_focused_leaf_node(id));
-
-                let Some(leaf_id) = focused_leaf else {
-                    return false;
-                };
-
-                // Check if the leaf's direct parent is this container
-                let leaf_parent = self.parent(leaf_id);
-
-                if leaf_parent == Some(node_id) {
-                    // Leaf is a direct child — swap with adjacent sibling
-                    let can_move = matches!(
-                        (layout, direction),
-                        (Layout::SplitH, Direction::Left | Direction::Right)
-                            | (Layout::SplitV, Direction::Up | Direction::Down)
-                    );
-
-                    if can_move {
-                        let leaf_idx = children.iter().position(|&c| c == leaf_id);
-                        let Some(leaf_idx) = leaf_idx else {
-                            return false;
-                        };
-
-                        let new_pos = match direction {
-                            Direction::Left | Direction::Up => {
-                                if leaf_idx > 0 {
-                                    leaf_idx - 1
-                                } else {
-                                    return false;
-                                }
-                            }
-                            Direction::Right | Direction::Down => {
-                                if leaf_idx + 1 < children.len() {
-                                    leaf_idx + 1
-                                } else {
-                                    return false;
-                                }
-                            }
-                        };
-
-                        if let Some(node) = self.get_mut(node_id) {
-                            node.children.swap(leaf_idx, new_pos);
-                            if let NodeData::Container {
-                                ref mut sizes,
-                                ref mut focused_child,
-                                ..
-                            } = node.data
-                            {
-                                if leaf_idx < sizes.len() && new_pos < sizes.len() {
-                                    sizes.swap(leaf_idx, new_pos);
-                                }
-                                *focused_child = new_pos;
-                            }
-                        }
-                        return true;
-                    }
-                }
-                false
-            }
-            Some(('w', _, _, children)) => {
-                for &child in &children {
-                    if self.move_window_in(child, direction) {
-                        return true;
-                    }
-                }
-                false
-            }
-            _ => false,
-        }
-    }
+    // move_window_in removed — replaced by walk-up approach in move_window()
 
     fn find_workspace_by_name_global(&self, name: &str) -> Option<NodeId> {
         let root = self.root();
@@ -2325,6 +2294,96 @@ mod tests {
             ),
             "last child should be window C"
         );
+    }
+
+    #[test]
+    fn move_down_swaps_within_column_only() {
+        // Layout:  SplitH [ SplitV[A,C], SplitV[B,D] ]
+        // Focus A, move down → SplitH [ SplitV[C,A], SplitV[B,D] ]
+        let mut tree = make_ws_tree();
+        tree.insert_window(1); // A
+        tree.insert_window_with_layout(2, Layout::SplitV); // wrap: SplitV[A, B]
+        // Hmm, this creates SplitH[SplitV[A,B]] — not what we want.
+        // We need: SplitH[ SplitV[A,C], SplitV[B,D] ]
+
+        // Build manually:
+        let mut tree = Tree::new();
+        let root = tree.root();
+        let out = tree.add_node(root, output_data("eDP-1"));
+        let ws = tree.add_node(out, NodeData::Workspace {
+            name: "1".into(),
+            output: out,
+            is_visible: true,
+        });
+        let splith = tree.add_node(ws, NodeData::Container {
+            layout: Layout::SplitH,
+            sizes: vec![1.0, 1.0],
+            focused_child: 0,
+        });
+        let col1 = tree.add_node(splith, NodeData::Container {
+            layout: Layout::SplitV,
+            sizes: vec![1.0, 1.0],
+            focused_child: 0, // focus on A
+        });
+        let col2 = tree.add_node(splith, NodeData::Container {
+            layout: Layout::SplitV,
+            sizes: vec![1.0, 1.0],
+            focused_child: 0,
+        });
+        let a = tree.add_node(col1, window_data(1)); // A
+        let c = tree.add_node(col1, window_data(3)); // C
+        let b = tree.add_node(col2, window_data(2)); // B
+        let d = tree.add_node(col2, window_data(4)); // D
+
+        // Focus is on A (col1.focused_child=0, splith.focused_child=0)
+        // Move down: A should swap with C in col1
+        let moved = tree.move_window(Direction::Down);
+        assert!(moved, "move down should succeed");
+
+        // col1 children should now be [C, A]
+        let col1_children = tree.children(col1);
+        assert_eq!(col1_children[0], c, "C should be first after move down");
+        assert_eq!(col1_children[1], a, "A should be second after move down");
+
+        // col2 should be unchanged: [B, D]
+        let col2_children = tree.children(col2);
+        assert_eq!(col2_children[0], b, "B should still be first");
+        assert_eq!(col2_children[1], d, "D should still be second");
+    }
+
+    #[test]
+    fn move_right_swaps_columns_not_rows() {
+        // SplitH [ SplitV[A,C], SplitV[B,D] ]
+        // Focus A, move right → SplitH [ SplitV[B,D], SplitV[A,C] ]
+        // (the whole column swaps, because A's ancestor at SplitH level is col1)
+        let mut tree = Tree::new();
+        let root = tree.root();
+        let out = tree.add_node(root, output_data("eDP-1"));
+        let ws = tree.add_node(out, NodeData::Workspace {
+            name: "1".into(), output: out, is_visible: true,
+        });
+        let splith = tree.add_node(ws, NodeData::Container {
+            layout: Layout::SplitH, sizes: vec![1.0, 1.0], focused_child: 0,
+        });
+        let col1 = tree.add_node(splith, NodeData::Container {
+            layout: Layout::SplitV, sizes: vec![1.0, 1.0], focused_child: 0,
+        });
+        let col2 = tree.add_node(splith, NodeData::Container {
+            layout: Layout::SplitV, sizes: vec![1.0, 1.0], focused_child: 0,
+        });
+        tree.add_node(col1, window_data(1)); // A
+        tree.add_node(col1, window_data(3)); // C
+        tree.add_node(col2, window_data(2)); // B
+        tree.add_node(col2, window_data(4)); // D
+
+        // Focus on A, move right
+        let moved = tree.move_window(Direction::Right);
+        assert!(moved);
+
+        // SplitH children should now be [col2, col1] (columns swapped)
+        let h_children = tree.children(splith);
+        assert_eq!(h_children[0], col2, "col2 should now be first (left)");
+        assert_eq!(h_children[1], col1, "col1 should now be second (right)");
     }
 
     #[test]
