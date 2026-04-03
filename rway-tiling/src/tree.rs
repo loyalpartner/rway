@@ -585,7 +585,14 @@ impl Tree {
             None => return false,
         };
 
-        self.move_focus_in(ws_id, direction)
+        let result = self.move_focus_in(ws_id, direction);
+        if result {
+            // Re-sync the full focused_child path from the new leaf
+            if let Some(wid) = self.focused_window_id() {
+                self.focus_window(wid);
+            }
+        }
+        result
     }
 
     /// Change the layout of the focused container
@@ -622,6 +629,39 @@ impl Tree {
     pub fn focused_window_id(&self) -> Option<u64> {
         let ws_id = self.focused_workspace()?;
         self.find_focused_leaf(ws_id)
+    }
+
+    /// Sync the tiling tree's focused_child path to match a specific window.
+    ///
+    /// Walks from the window node up to the workspace, updating each
+    /// container's focused_child to point toward this window. This must
+    /// be called whenever keyboard focus changes (click, focus command)
+    /// to keep the tree's focus state in sync with the actual focus.
+    pub fn focus_window(&mut self, window_id: u64) -> bool {
+        let win_node = match self.find_window_by_id(window_id) {
+            Some(id) => id,
+            None => return false,
+        };
+
+        // Walk up from the window, updating each parent's focused_child
+        let mut current = win_node;
+        while let Some(parent_id) = self.parent(current) {
+            // Find which index `current` is in parent's children
+            let idx = self.children(parent_id).iter().position(|&c| c == current);
+            if let Some(idx) = idx {
+                if let Some(node) = self.get_mut(parent_id) {
+                    if let NodeData::Container { ref mut focused_child, .. } = node.data {
+                        *focused_child = idx;
+                    }
+                }
+            }
+            // Stop at workspace level
+            if self.get(parent_id).map(|n| matches!(n.data, NodeData::Workspace { .. })).unwrap_or(false) {
+                break;
+            }
+            current = parent_id;
+        }
+        true
     }
 
     /// Move the focused window in the given direction (Sway behavior).
@@ -686,15 +726,19 @@ impl Tree {
                     node.children.swap(idx, new_pos);
                     if let NodeData::Container {
                         ref mut sizes,
-                        ref mut focused_child,
                         ..
                     } = node.data
                     {
                         if idx < sizes.len() && new_pos < sizes.len() {
                             sizes.swap(idx, new_pos);
                         }
-                        *focused_child = new_pos;
                     }
+                }
+                // Re-sync the entire focused_child path from the leaf
+                // to handle cases where the swap changes ancestor relationships
+                let win_id = self.find_focused_leaf(leaf_id);
+                if let Some(wid) = win_id {
+                    self.focus_window(wid);
                 }
                 return true;
             }

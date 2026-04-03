@@ -153,13 +153,21 @@ impl RwayState {
                         .element_under(pointer.current_location())
                         .map(|(w, l)| (w.clone(), l))
                     {
-                        // 点击聚焦：提升窗口层级并设置键盘焦点
                         self.space.raise_element(&window, true);
                         let focus_surface = window
                             .toplevel()
                             .map(|t| t.wl_surface().clone())
                             .or_else(|| window.wl_surface().map(|s| s.into_owned()));
                         keyboard.set_focus(self, focus_surface, serial);
+
+                        // Sync tiling tree focused_child path to this window
+                        if let Some((&win_id, _)) = self.window_map.iter().find(|(_, w)| {
+                            w.toplevel()
+                                .zip(window.toplevel())
+                                .map_or(false, |(a, b)| a.wl_surface() == b.wl_surface())
+                        }) {
+                            self.tiling.focus_window(win_id);
+                        }
                         self.space.elements().for_each(|w| {
                             if let Some(t) = w.toplevel() {
                                 t.send_pending_configure();
