@@ -49,23 +49,22 @@ impl IpcSubscriber {
     }
 }
 
-/// Register the IPC server with the calloop event loop
+/// Register the IPC server with the calloop event loop.
+/// Polls every 16ms (~1 frame) for new client connections.
 pub(crate) fn register_ipc_source(handle: &LoopHandle<'static, RwayState>) {
-    // 使用定时器轮询 IPC 连接（简单可靠的方式）
-    // 每 50ms 检查一次新连接
     handle
         .insert_source(
             smithay::reexports::calloop::timer::Timer::from_duration(
-                std::time::Duration::from_millis(200),
+                std::time::Duration::from_millis(16),
             ),
             |_, _, state| {
                 poll_ipc_connections(state);
                 smithay::reexports::calloop::timer::TimeoutAction::ToDuration(
-                    std::time::Duration::from_millis(200),
+                    std::time::Duration::from_millis(16),
                 )
             },
         )
-        .expect("注册 IPC 轮询源失败");
+        .expect("Failed to register IPC poll source");
 }
 
 /// 轮询 IPC 连接并处理请求
