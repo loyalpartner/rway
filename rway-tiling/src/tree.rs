@@ -1206,10 +1206,11 @@ impl Tree {
         new_win_data: NodeData,
         split_layout: Layout,
     ) -> NodeId {
-        // 1. Remove existing window from parent's children
+        // 1. Remove existing window from parent's children list (keep the slot for replacement)
         if let Some(parent_node) = self.get_mut(parent_id) {
             parent_node.children.retain(|&c| c != existing_win);
         }
+        // Remove the size entry — we'll re-insert at the same position
         let _ = self.remove_container_size(parent_id, child_index);
 
         // 2. Orphan the existing window temporarily
@@ -1217,15 +1218,44 @@ impl Tree {
             win_node.parent = None;
         }
 
-        // 3. Create new container under parent with the specified split direction
+        // 3. Create new container (allocate node, but DON'T use add_node which appends to end)
         let container_data = NodeData::Container {
             layout: split_layout,
             sizes: vec![1.0, 1.0],
             focused_child: 1, // new window is focused
         };
-        let container_id = self.add_node(parent_id, container_data);
 
-        // 4. Re-parent existing window under container
+        // Allocate the container node ID
+        let container_id = if let Some(reused) = self.free_list.pop() {
+            reused
+        } else {
+            let idx = self.nodes.len();
+            self.nodes.push(None);
+            NodeId(idx)
+        };
+        self.nodes[container_id.0] = Some(Node {
+            parent: Some(parent_id),
+            children: Vec::new(),
+            data: container_data,
+        });
+
+        // 4. Insert container at the ORIGINAL position in parent (not appended to end)
+        if let Some(parent_node) = self.get_mut(parent_id) {
+            let insert_pos = child_index.min(parent_node.children.len());
+            parent_node.children.insert(insert_pos, container_id);
+            // Re-add size entry at the same position
+            if let NodeData::Container {
+                ref mut sizes,
+                ref mut focused_child,
+                ..
+            } = parent_node.data
+            {
+                sizes.insert(insert_pos, 1.0);
+                *focused_child = insert_pos;
+            }
+        }
+
+        // 5. Re-parent existing window under container
         if let Some(win_node) = self.get_mut(existing_win) {
             win_node.parent = Some(container_id);
         }
@@ -1233,25 +1263,8 @@ impl Tree {
             container_node.children.push(existing_win);
         }
 
-        // 5. Add new window to container
+        // 6. Add new window to container
         let new_win_id = self.add_node(container_id, new_win_data);
-
-        // 6. Update parent's focused_child
-        let parent_children_len = self.get(parent_id).map(|n| n.children.len()).unwrap_or(0);
-
-        if let Some(parent_node) = self.get_mut(parent_id) {
-            if let NodeData::Container {
-                ref mut focused_child,
-                ref mut sizes,
-                ..
-            } = parent_node.data
-            {
-                *focused_child = parent_children_len.saturating_sub(1);
-                while sizes.len() < parent_children_len {
-                    sizes.push(1.0);
-                }
-            }
-        }
 
         new_win_id
     }
@@ -1447,22 +1460,21 @@ impl Tree {
         }
     }
 
+    /// Move the focused LEAF window in the given direction.
+    ///
+    /// Sway behavior: only the focused window moves, not entire containers.
+    /// At the same container level, swap with the adjacent sibling.
     fn move_window_in(&mut self, node_id: NodeId, direction: Direction) -> bool {
+        // Extract node info
         let info = match self.get(node_id) {
             Some(n) => match &n.data {
                 NodeData::Container {
                     layout,
                     focused_child,
                     ..
-                } => {
-                    let layout = *layout;
-                    let focused = *focused_child;
-                    let children: Vec<NodeId> = self.children(node_id).to_vec();
-                    Some(('c', layout, focused, children))
-                }
+                } => Some(('c', *layout, *focused_child, n.children.to_vec())),
                 NodeData::Workspace { .. } => {
-                    let children: Vec<NodeId> = self.children(node_id).to_vec();
-                    Some(('w', Layout::SplitH, 0, children))
+                    Some(('w', Layout::SplitH, 0, n.children.to_vec()))
                 }
                 _ => None,
             },
@@ -1471,58 +1483,72 @@ impl Tree {
 
         match info {
             Some(('c', layout, focused, children)) => {
-                // Try recursing into focused child container first
+                // First, try to recurse into the focused child
                 if let Some(&focused_id) = children.get(focused) {
-                    let child_is_container = self
-                        .get(focused_id)
-                        .map(|n| matches!(n.data, NodeData::Container { .. }))
-                        .unwrap_or(false);
-                    if child_is_container && self.move_window_in(focused_id, direction) {
+                    if self.move_window_in(focused_id, direction) {
                         return true;
                     }
                 }
 
-                let can_move = matches!(
-                    (layout, direction),
-                    (Layout::SplitH, Direction::Left)
-                        | (Layout::SplitH, Direction::Right)
-                        | (Layout::SplitV, Direction::Up)
-                        | (Layout::SplitV, Direction::Down)
-                );
+                // Find the focused LEAF window node in this container
+                let focused_leaf = children
+                    .get(focused)
+                    .and_then(|&id| self.find_focused_leaf_node(id));
 
-                if can_move && !children.is_empty() {
-                    let new_pos = match direction {
-                        Direction::Left | Direction::Up => {
-                            if focused > 0 {
-                                focused - 1
-                            } else {
-                                return false;
-                            }
-                        }
-                        Direction::Right | Direction::Down => {
-                            if focused + 1 < children.len() {
-                                focused + 1
-                            } else {
-                                return false;
-                            }
-                        }
-                    };
+                let Some(leaf_id) = focused_leaf else {
+                    return false;
+                };
 
-                    if let Some(node) = self.get_mut(node_id) {
-                        node.children.swap(focused, new_pos);
-                        if let NodeData::Container {
-                            ref mut sizes,
-                            ref mut focused_child,
-                            ..
-                        } = node.data
-                        {
-                            if focused < sizes.len() && new_pos < sizes.len() {
-                                sizes.swap(focused, new_pos);
+                // Check if the leaf's direct parent is this container
+                let leaf_parent = self.parent(leaf_id);
+
+                if leaf_parent == Some(node_id) {
+                    // Leaf is a direct child — swap with adjacent sibling
+                    let can_move = matches!(
+                        (layout, direction),
+                        (Layout::SplitH, Direction::Left | Direction::Right)
+                            | (Layout::SplitV, Direction::Up | Direction::Down)
+                    );
+
+                    if can_move {
+                        let leaf_idx = children.iter().position(|&c| c == leaf_id);
+                        let Some(leaf_idx) = leaf_idx else {
+                            return false;
+                        };
+
+                        let new_pos = match direction {
+                            Direction::Left | Direction::Up => {
+                                if leaf_idx > 0 {
+                                    leaf_idx - 1
+                                } else {
+                                    return false;
+                                }
                             }
-                            *focused_child = new_pos;
+                            Direction::Right | Direction::Down => {
+                                if leaf_idx + 1 < children.len() {
+                                    leaf_idx + 1
+                                } else {
+                                    return false;
+                                }
+                            }
+                        };
+
+                        if let Some(node) = self.get_mut(node_id) {
+                            node.children.swap(leaf_idx, new_pos);
+                            if let NodeData::Container {
+                                ref mut sizes,
+                                ref mut focused_child,
+                                ..
+                            } = node.data
+                            {
+                                if leaf_idx < sizes.len() && new_pos < sizes.len() {
+                                    sizes.swap(leaf_idx, new_pos);
+                                }
+                                *focused_child = new_pos;
+                            }
                         }
+                        return true;
                     }
-                    return true;
                 }
                 false
             }
@@ -2236,6 +2262,69 @@ mod tests {
         for (_, g) in &geoms {
             assert_eq!(g.width, 960, "after removing one, each should get half");
         }
+    }
+
+    #[test]
+    fn wrap_container_preserves_position() {
+        // Bug fix: wrapping window B in [A | B | C] should produce [A | [B,D] | C]
+        // not [A | C | [B,D]]
+        let mut tree = make_ws_tree();
+        tree.insert_window(1); // A
+        tree.insert_window(2); // B
+        tree.insert_window(3); // C — now [A | B | C]
+
+        // Focus B (index 1 in container)
+        let ws = tree.focused_workspace().unwrap();
+        let container = tree.children(ws)[0];
+        if let Some(node) = tree.get_mut(container) {
+            if let NodeData::Container {
+                ref mut focused_child,
+                ..
+            } = node.data
+            {
+                *focused_child = 1;
+            }
+        }
+
+        // Insert D with SplitV — should wrap B, not append to end
+        tree.insert_window_with_layout(4, Layout::SplitV);
+
+        // Check: container should still have 3 children [A, nested, C]
+        let top_children = tree.children(container);
+        assert_eq!(top_children.len(), 3, "top container should have 3 children");
+
+        // The middle child (index 1) should be the SplitV sub-container
+        let middle = top_children[1];
+        assert!(
+            matches!(
+                tree.get(middle).map(|n| &n.data),
+                Some(NodeData::Container {
+                    layout: Layout::SplitV,
+                    ..
+                })
+            ),
+            "middle child should be a SplitV container"
+        );
+
+        // First child should still be window A (id=1)
+        let first = top_children[0];
+        assert!(
+            matches!(
+                tree.get(first).map(|n| &n.data),
+                Some(NodeData::Window { window_id: 1, .. })
+            ),
+            "first child should be window A"
+        );
+
+        // Last child should still be window C (id=3)
+        let last = top_children[2];
+        assert!(
+            matches!(
+                tree.get(last).map(|n| &n.data),
+                Some(NodeData::Window { window_id: 3, .. })
+            ),
+            "last child should be window C"
+        );
     }
 
     #[test]
