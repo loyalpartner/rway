@@ -91,55 +91,61 @@ fn poll_ipc_connections(state: &mut RwayState) {
         .retain(|sub| sub.stream.peer_addr().is_ok());
 }
 
-/// 处理单个 IPC 客户端连接
+/// Handle an IPC client connection. Reads messages in a loop so clients
+/// can send multiple requests (e.g., GetVersion then Subscribe) on the
+/// same connection. Returns when the connection is closed or a Subscribe
+/// converts it into a persistent subscriber.
 fn handle_ipc_client(stream: &mut UnixStream, state: &mut RwayState) {
-    let mut header_buf = [0u8; HEADER_SIZE];
-    if stream.read_exact(&mut header_buf).is_err() {
-        return;
-    }
-
-    let (payload_len, msg_type) = match protocol::decode_header(&header_buf) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("IPC header parse error: {}", e);
+    loop {
+        let mut header_buf = [0u8; HEADER_SIZE];
+        if stream.read_exact(&mut header_buf).is_err() {
             return;
         }
-    };
 
-    if payload_len > 1_048_576 {
-        tracing::warn!("IPC payload too large: {} bytes", payload_len);
-        return;
-    }
-    let mut payload = vec![0u8; payload_len as usize];
-    if payload_len > 0 && stream.read_exact(&mut payload).is_err() {
-        return;
-    }
+        let (payload_len, msg_type) = match protocol::decode_header(&header_buf) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("IPC header parse error: {}", e);
+                return;
+            }
+        };
 
-    tracing::debug!("IPC request: type={} payload_len={}", msg_type, payload_len);
-
-    // Subscribe (msg_type 2): keep connection open, store as subscriber
-    if msg_type == 2 {
-        let payload_str = String::from_utf8_lossy(&payload);
-        let subs = rway_ipc::parse_subscribe_payload(&payload_str).unwrap_or_default();
-        tracing::info!("IPC subscribe: {:?}", subs);
-
-        // Send success response
-        let reply = protocol::encode_message(2, b"{\"success\":true}");
-        let _ = stream.write_all(&reply);
-
-        // Clone stream and store as subscriber (original stream stays open)
-        if let Ok(cloned) = stream.try_clone() {
-            let _ = cloned.set_nonblocking(true);
-            state.ipc_subscribers.push(IpcSubscriber {
-                stream: cloned,
-                subscriptions: subs.into_iter().collect(),
-            });
+        if payload_len > 1_048_576 {
+            tracing::warn!("IPC payload too large: {} bytes", payload_len);
+            return;
         }
-        return;
-    }
+        let mut payload = vec![0u8; payload_len as usize];
+        if payload_len > 0 && stream.read_exact(&mut payload).is_err() {
+            return;
+        }
 
-    let response = dispatch_ipc_message(state, msg_type, &payload);
-    let _ = stream.write_all(&response);
+        tracing::debug!("IPC request: type={} payload_len={}", msg_type, payload_len);
+
+        // Subscribe (msg_type 2): keep connection open, store as subscriber
+        if msg_type == 2 {
+            let payload_str = String::from_utf8_lossy(&payload);
+            let subs = rway_ipc::parse_subscribe_payload(&payload_str).unwrap_or_default();
+            tracing::info!("IPC subscribe: {:?}", subs);
+
+            let reply = protocol::encode_message(2, b"{\"success\":true}");
+            let _ = stream.write_all(&reply);
+
+            if let Ok(cloned) = stream.try_clone() {
+                let _ = cloned.set_nonblocking(true);
+                state.ipc_subscribers.push(IpcSubscriber {
+                    stream: cloned,
+                    subscriptions: subs.into_iter().collect(),
+                });
+            }
+            return; // Connection is now a subscriber, stop reading
+        }
+
+        // Normal request-response
+        let response = dispatch_ipc_message(state, msg_type, &payload);
+        if stream.write_all(&response).is_err() {
+            return;
+        }
+    }
 }
 
 /// Broadcast an event to all subscribers with matching subscriptions.
