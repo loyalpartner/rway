@@ -80,9 +80,9 @@ fn poll_ipc_connections(state: &mut RwayState) {
         new_streams.push(stream);
     }
 
-    for mut stream in new_streams {
+    for stream in new_streams {
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(100)));
-        handle_ipc_client(&mut stream, state);
+        handle_ipc_client(stream, state);
     }
 
     // Clean up dead subscribers
@@ -92,14 +92,14 @@ fn poll_ipc_connections(state: &mut RwayState) {
 }
 
 /// Handle an IPC client connection. Reads messages in a loop so clients
-/// can send multiple requests (e.g., GetVersion then Subscribe) on the
-/// same connection. Returns when the connection is closed or a Subscribe
-/// converts it into a persistent subscriber.
-fn handle_ipc_client(stream: &mut UnixStream, state: &mut RwayState) {
+/// can send multiple requests on the same connection. When a Subscribe
+/// message arrives, the stream is MOVED into the subscriber list (keeping
+/// the connection alive for event pushing).
+fn handle_ipc_client(mut stream: UnixStream, state: &mut RwayState) {
     loop {
         let mut header_buf = [0u8; HEADER_SIZE];
         if stream.read_exact(&mut header_buf).is_err() {
-            return;
+            return; // Connection closed or read timeout — drop stream
         }
 
         let (payload_len, msg_type) = match protocol::decode_header(&header_buf) {
@@ -119,25 +119,31 @@ fn handle_ipc_client(stream: &mut UnixStream, state: &mut RwayState) {
             return;
         }
 
-        tracing::debug!("IPC request: type={} payload_len={}", msg_type, payload_len);
+        tracing::info!("IPC request: type={} payload_len={}", msg_type, payload_len);
 
-        // Subscribe (msg_type 2): keep connection open, store as subscriber
+        // Subscribe (msg_type 2): move stream into subscriber list
         if msg_type == 2 {
             let payload_str = String::from_utf8_lossy(&payload);
             let subs = rway_ipc::parse_subscribe_payload(&payload_str).unwrap_or_default();
             tracing::info!("IPC subscribe: {:?}", subs);
 
-            let reply = protocol::encode_message(2, b"{\"success\":true}");
-            let _ = stream.write_all(&reply);
-
-            if let Ok(cloned) = stream.try_clone() {
-                let _ = cloned.set_nonblocking(true);
-                state.ipc_subscribers.push(IpcSubscriber {
-                    stream: cloned,
-                    subscriptions: subs.into_iter().collect(),
-                });
+            let reply = protocol::encode_reply(
+                protocol::MessageType::Subscribe,
+                &serde_json::json!({"success": true}),
+            );
+            if let Err(e) = stream.write_all(&reply) {
+                tracing::warn!("IPC subscribe reply write failed: {}", e);
+                return;
             }
-            return; // Connection is now a subscriber, stop reading
+            let _ = stream.flush();
+
+            // Move the stream into subscriber list — no clone, no premature close
+            let _ = stream.set_nonblocking(true);
+            state.ipc_subscribers.push(IpcSubscriber {
+                stream,
+                subscriptions: subs.into_iter().collect(),
+            });
+            return; // Stream ownership transferred, don't drop it
         }
 
         // Normal request-response
@@ -146,6 +152,7 @@ fn handle_ipc_client(stream: &mut UnixStream, state: &mut RwayState) {
             return;
         }
     }
+    // Non-subscribe connections: stream dropped here, closing the connection
 }
 
 /// Broadcast an event to all subscribers with matching subscriptions.
