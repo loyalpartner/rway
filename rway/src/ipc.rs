@@ -85,10 +85,16 @@ fn poll_ipc_connections(state: &mut RwayState) {
         handle_ipc_client(stream, state);
     }
 
-    // Clean up dead subscribers
-    state
-        .ipc_subscribers
-        .retain(|sub| sub.stream.peer_addr().is_ok());
+    // Clean up dead subscribers by attempting a zero-byte write.
+    // peer_addr() is unreliable for detecting dead Unix domain sockets.
+    state.ipc_subscribers.retain_mut(|sub| {
+        // A zero-byte write succeeds on live sockets, fails on dead ones
+        match sub.stream.write(&[]) {
+            Ok(_) => true,
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => true, // nonblocking, still alive
+            Err(_) => false, // broken pipe, connection reset, etc.
+        }
+    });
 }
 
 /// Handle an IPC client connection. Reads messages in a loop so clients
