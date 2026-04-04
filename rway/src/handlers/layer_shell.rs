@@ -24,6 +24,7 @@ impl WlrLayerShellHandler for RwayState {
         _layer: Layer,
         namespace: String,
     ) {
+        tracing::info!("New layer surface: namespace={}", namespace);
         // 确定目标输出：使用请求的输出，或默认使用第一个输出
         let target_output = output
             .as_ref()
@@ -35,12 +36,13 @@ impl WlrLayerShellHandler for RwayState {
             return;
         };
 
-        // 将 layer surface 映射到输出的 layer map
+        // Map layer surface and arrange to send initial configure
         let mut layer_map = layer_map_for_output(&output);
         let layer_surface = LayerSurface::new(surface, namespace);
         if let Err(e) = layer_map.map_layer(&layer_surface) {
             tracing::warn!("Failed to map layer surface: {}", e);
         }
+        layer_map.arrange();
         drop(layer_map);
 
         // 重新布局（exclusive zone 可能变化）

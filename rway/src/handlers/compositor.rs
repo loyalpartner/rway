@@ -61,8 +61,16 @@ impl CompositorHandler for RwayState {
         // 4. Handle resize grab post-commit logic
         resize_grab::handle_commit(&mut self.space, surface);
 
-        // 5. Handle layer surface commit: rearrange layer layout
+        // 5. Handle layer surface commit: send initial configure + rearrange
         if let Some(output) = self.space.outputs().next().cloned() {
+            let layer_map = layer_map_for_output(&output);
+            // Send initial configure for layer surfaces that haven't been configured yet
+            // (wlr-layer-shell spec: initial configure must be in response to first commit)
+            for layer in layer_map.layers() {
+                layer.layer_surface().send_pending_configure();
+            }
+            drop(layer_map);
+
             let mut layer_map = layer_map_for_output(&output);
             layer_map.arrange();
         }

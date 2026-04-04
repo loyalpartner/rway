@@ -88,14 +88,20 @@ impl WinitState {
         }
 
         let output = &self.output;
+        let frame_time = state.start_time.elapsed();
         state.space.elements().for_each(|window| {
-            window.send_frame(
-                output,
-                state.start_time.elapsed(),
-                Some(Duration::ZERO),
-                |_, _| Some(output.clone()),
-            )
+            window.send_frame(output, frame_time, Some(Duration::ZERO), |_, _| {
+                Some(output.clone())
+            })
         });
+
+        // Send frame to layer surfaces (waybar etc.) so they render next frame
+        let layer_map = smithay::desktop::layer_map_for_output(output);
+        for layer in layer_map.layers() {
+            layer.send_frame(output, frame_time, Some(Duration::ZERO), |_, _| {
+                Some(output.clone())
+            });
+        }
 
         state.space.refresh();
         state.popups.cleanup();
