@@ -561,6 +561,8 @@ impl RwayState {
             return;
         }
 
+        tracing::info!("cleanup_dead_windows: removing {:?}", dead_ids);
+
         // 从平铺树、window_map 和动画管理器中移除
         for id in &dead_ids {
             rway_tiling::commands::remove_window(&mut self.tiling, *id);
@@ -568,13 +570,13 @@ impl RwayState {
             self.animations.remove(*id);
         }
 
-        tracing::debug!("清理了 {} 个已关闭窗口", dead_ids.len());
-
-        // 重新布局以填充空出的空间
+        tracing::info!("cleanup_dead_windows: relayout start");
         self.relayout();
+        tracing::info!("cleanup_dead_windows: relayout done, updating focus");
 
         // 将焦点转移到下一个窗口
         crate::focus::update_focus(self);
+        tracing::info!("cleanup_dead_windows: done");
     }
 
     /// 分配下一个窗口 ID
