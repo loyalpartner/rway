@@ -40,6 +40,15 @@ impl CompositorHandler for RwayState {
         // 1. 处理缓冲区提交（释放旧缓冲区等）
         on_commit_buffer_handler::<Self>(surface);
 
+        // 2. Early-import buffer for multi-GPU renderer (DRM backend).
+        // Without this, DMA-BUF/SHM textures aren't available during render
+        // and surfaces appear black (e.g. Chrome on DRM).
+        if let Some(udev) = self.udev_data.as_mut() {
+            if let Err(err) = udev.gpus.early_import(udev.primary_gpu, surface) {
+                tracing::warn!("early buffer import failed: {}", err);
+            }
+        }
+
         // 2. 若不是同步子表面，向上查找根表面并触发 on_commit
         if !is_sync_subsurface(surface) {
             let mut root = surface.clone();
@@ -108,3 +117,6 @@ impl ShmHandler for RwayState {
 
 delegate_compositor!(RwayState);
 delegate_shm!(RwayState);
+smithay::delegate_viewporter!(RwayState);
+smithay::delegate_presentation!(RwayState);
+smithay::delegate_single_pixel_buffer!(RwayState);

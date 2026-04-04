@@ -57,6 +57,10 @@ impl XwmHandler for RwayState {
     }
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        tracing::info!(
+            "map_window_request: X11/XWayland window title={:?}",
+            window.title()
+        );
         // 标记为已映射
         if let Err(e) = window.set_mapped(true) {
             warn!("设置 X11 窗口映射状态失败: {}", e);

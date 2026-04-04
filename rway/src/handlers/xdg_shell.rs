@@ -37,6 +37,7 @@ impl XdgShellHandler for RwayState {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        tracing::info!("new_toplevel: Wayland native window");
         let wl_surface = surface.wl_surface().clone();
         let window = Window::new_wayland_window(surface);
 

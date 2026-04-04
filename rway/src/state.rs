@@ -165,6 +165,15 @@ impl RwayState {
         // XDG Decoration 协议（告知客户端由合成器处理装饰）
         let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
 
+        // Viewporter 协议（Chrome 等客户端依赖此协议做 buffer 缩放/裁剪）
+        smithay::wayland::viewporter::ViewporterState::new::<Self>(&dh);
+
+        // Presentation-time 协议（Chrome 用于帧时序同步）
+        smithay::wayland::presentation::PresentationState::new::<Self>(&dh, 1); // CLOCK_MONOTONIC
+
+        // Single-pixel buffer 协议（Chrome 用于背景色和装饰的高效渲染）
+        smithay::wayland::single_pixel_buffer::SinglePixelBufferState::new::<Self>(&dh);
+
         // Input method (IME) protocols: text-input, input-method, virtual-keyboard
         let text_input_manager_state = TextInputManagerState::new::<Self>(&dh);
         let input_method_manager_state =

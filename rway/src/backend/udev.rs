@@ -112,8 +112,8 @@ pub(crate) struct UdevData {
     pub(crate) session: LibSeatSession,
     _dh: DisplayHandle,
     dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
-    primary_gpu: DrmNode,
-    gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
+    pub(crate) primary_gpu: DrmNode,
+    pub(crate) gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     backends: HashMap<DrmNode, BackendData>,
     keyboards: Vec<smithay::reexports::input::Device>,
 }
@@ -488,6 +488,7 @@ pub(crate) fn run_udev() {
 
     // 设置环境变量
     std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
+    std::env::set_var("XDG_SESSION_TYPE", "wayland");
     info!("Wayland 套接字：{:?}", state.socket_name);
 
     // 启动 XWayland 以支持 X11 应用

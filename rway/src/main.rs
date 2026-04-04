@@ -87,8 +87,9 @@ fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     // 注册 IPC 轮询到事件循环
     ipc::register_ipc_source(&event_loop.handle());
 
-    // 设置 WAYLAND_DISPLAY 环境变量，使子进程自动连接到本合成器
+    // 设置环境变量，使子进程自动连接到本合成器
     std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
+    std::env::set_var("XDG_SESSION_TYPE", "wayland");
     tracing::info!("Wayland 套接字：{:?}", state.socket_name);
 
     // Execute startup commands from config (bar { swaybar_command }, exec)
