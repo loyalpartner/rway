@@ -72,8 +72,9 @@ impl CompositorHandler for RwayState {
             drop(layer_map);
 
             let mut layer_map = layer_map_for_output(&output);
-            let changed = layer_map.arrange();
-            if changed {
+            layer_map.arrange();
+            // Always log layer geometry for debugging
+            {
                 for layer in layer_map.layers() {
                     if let Some(geo) = layer_map.layer_geometry(layer) {
                         tracing::info!(
