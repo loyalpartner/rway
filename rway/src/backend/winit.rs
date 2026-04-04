@@ -137,7 +137,7 @@ pub(crate) fn init_winit(
     let _global = output.create_global::<RwayState>(&state.display_handle);
     output.change_current_state(
         Some(mode),
-        Some(Transform::Flipped180),
+        Some(Transform::Normal),
         None,
         Some((0, 0).into()),
     );
@@ -148,7 +148,9 @@ pub(crate) fn init_winit(
     let win_size = backend.window_size();
     state.init_tiling_output(win_size.w, win_size.h);
 
-    let damage_tracker = OutputDamageTracker::from_output(&output);
+    // Use static damage tracker with Flipped180 for correct OpenGL Y-axis flip,
+    // while keeping output state Normal so layer_map calculates correct positions.
+    let damage_tracker = OutputDamageTracker::new(mode.size, 1.0, Transform::Flipped180);
     let border_config = BorderConfig::from_config(&state.config);
 
     state.winit = Some(WinitState {
@@ -218,7 +220,7 @@ impl RwayState {
     pub fn process_winit_event(&mut self, event: WinitEvent, render_ping: &calloop::ping::Ping) {
         match event {
             WinitEvent::Resized { size, .. } => {
-                if let Some(winit) = &self.winit {
+                if let Some(winit) = &mut self.winit {
                     winit.output.change_current_state(
                         Some(Mode {
                             size,
@@ -228,6 +230,9 @@ impl RwayState {
                         None,
                         None,
                     );
+                    // Recreate static damage tracker with new size (keeps Flipped180 for OpenGL)
+                    winit.damage_tracker =
+                        OutputDamageTracker::new(size, 1.0, Transform::Flipped180);
                 }
                 render_ping.ping();
             }

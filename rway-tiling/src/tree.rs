@@ -2270,11 +2270,11 @@ impl Tree {
                         area: available,
                     }
                 }
-                NodeData::Output { geometry, .. } => {
+                NodeData::Output { .. } => {
                     let children: Vec<NodeId> = n.children.to_vec();
                     LayoutInfo::PassThrough {
                         children,
-                        area: *geometry,
+                        area: available,
                     }
                 }
                 NodeData::Workspace { .. } => {
