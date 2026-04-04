@@ -23,6 +23,7 @@ use smithay::{
 
 smithay::backend::renderer::element::render_elements! {
     pub WinitOverlayElement<=GlesRenderer>;
+    Cursor=crate::cursor::PointerRenderElement<GlesRenderer>,
     Solid=SolidColorRenderElement,
     Text=MemoryRenderBufferRenderElement<GlesRenderer>,
 }
@@ -56,11 +57,29 @@ impl WinitState {
                 return has_animations;
             };
 
+            // Cursor
+            let cursor_pos = state
+                .seat
+                .get_pointer()
+                .map(|p| p.current_location())
+                .unwrap_or_default();
+            let millis = state.start_time.elapsed().as_millis() as u32;
+            let cursor_elements = crate::cursor::render_cursor_element(
+                renderer,
+                &mut state.xcursor,
+                &state.cursor_status,
+                cursor_pos,
+                scale,
+                millis,
+            );
+
             let text_elements =
                 render::materialize_text_elements(renderer, &overlay.text_buffers, scale);
 
-            let mut custom_elements: Vec<WinitOverlayElement> =
-                Vec::with_capacity(overlay.solid.len() + text_elements.len());
+            let mut custom_elements: Vec<WinitOverlayElement> = Vec::with_capacity(
+                cursor_elements.len() + overlay.solid.len() + text_elements.len(),
+            );
+            custom_elements.extend(cursor_elements.into_iter().map(WinitOverlayElement::Cursor));
             custom_elements.extend(text_elements.into_iter().map(WinitOverlayElement::Text));
             custom_elements.extend(overlay.solid.into_iter().map(WinitOverlayElement::Solid));
 

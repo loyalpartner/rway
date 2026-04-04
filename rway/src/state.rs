@@ -99,6 +99,7 @@ pub struct RwayState {
 
     // Cursor state (updated by client via SeatHandler::cursor_image callback)
     pub(crate) cursor_status: CursorImageStatus,
+    pub(crate) xcursor: crate::cursor::XCursor,
 
     // Configuration
     pub(crate) config: rway_config::Config,
@@ -173,6 +174,9 @@ impl RwayState {
 
         // Single-pixel buffer 协议（Chrome 用于背景色和装饰的高效渲染）
         smithay::wayland::single_pixel_buffer::SinglePixelBufferState::new::<Self>(&dh);
+
+        // Cursor shape 协议（客户端通过名称请求光标形状，合成器用 xcursor 主题渲染）
+        smithay::wayland::cursor_shape::CursorShapeManagerState::new::<Self>(&dh);
 
         // Input method (IME) protocols: text-input, input-method, virtual-keyboard
         let text_input_manager_state = TextInputManagerState::new::<Self>(&dh);
@@ -256,6 +260,7 @@ impl RwayState {
             )),
 
             cursor_status: CursorImageStatus::default_named(),
+            xcursor: crate::cursor::XCursor::load(),
 
             loop_handle,
 

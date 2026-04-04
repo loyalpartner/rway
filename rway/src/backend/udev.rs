@@ -86,6 +86,7 @@ type UdevRenderer<'a> = MultiRenderer<
 
 smithay::backend::renderer::element::render_elements! {
     pub UdevRenderElement<='a, UdevRenderer<'a>>;
+    Cursor=crate::cursor::PointerRenderElement<UdevRenderer<'a>>,
     Space=smithay::desktop::space::SpaceRenderElements<UdevRenderer<'a>, smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement<UdevRenderer<'a>>>,
     Overlay=smithay::backend::renderer::element::solid::SolidColorRenderElement,
     Text=smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement<UdevRenderer<'a>>,
@@ -1150,6 +1151,22 @@ fn render_surface(
         }
     };
 
+    // Cursor
+    let cursor_pos = state
+        .seat
+        .get_pointer()
+        .map(|p| p.current_location())
+        .unwrap_or_default();
+    let millis = state.start_time.elapsed().as_millis() as u32;
+    let cursor_elements = crate::cursor::render_cursor_element(
+        &mut renderer,
+        &mut state.xcursor,
+        &state.cursor_status,
+        cursor_pos,
+        scale,
+        millis,
+    );
+
     // Space elements (window surfaces)
     let space_elements = smithay::desktop::space::space_render_elements::<
         _,
@@ -1158,13 +1175,13 @@ fn render_surface(
     >(&mut renderer, [&state.space], &output, 1.0)
     .unwrap_or_default();
 
-    // Materialize text buffers into GPU-backed render elements
     let text_elements =
         render::materialize_text_elements(&mut renderer, &overlay.text_buffers, scale);
 
-    // Compose: text on top, then solid overlays, then space surfaces
-    let mut elements: Vec<UdevRenderElement<'_>> =
-        Vec::with_capacity(text_elements.len() + overlay.solid.len() + space_elements.len());
+    let mut elements: Vec<UdevRenderElement<'_>> = Vec::with_capacity(
+        cursor_elements.len() + text_elements.len() + overlay.solid.len() + space_elements.len(),
+    );
+    elements.extend(cursor_elements.into_iter().map(UdevRenderElement::Cursor));
     elements.extend(text_elements.into_iter().map(UdevRenderElement::Text));
     elements.extend(overlay.solid.into_iter().map(UdevRenderElement::Overlay));
     elements.extend(space_elements.into_iter().map(UdevRenderElement::Space));

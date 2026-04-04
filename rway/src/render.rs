@@ -19,7 +19,6 @@ use smithay::{
         gles::GlesRenderer,
         ImportAll, ImportDmaWl, ImportEgl, ImportMem, ImportMemWl, Renderer,
     },
-    input::pointer::CursorImageStatus,
     utils::Scale,
 };
 
@@ -72,10 +71,7 @@ pub(crate) fn overlay_elements(
     border_config: &BorderConfig,
 ) -> OverlayOutput {
     let window_count = state.space.elements().count();
-    let mut solid = Vec::with_capacity(window_count * 4 + 1);
-
-    // Cursor (highest z-order)
-    solid.extend(cursor_elements(state, scale));
+    let mut solid = Vec::with_capacity(window_count * 4);
 
     // Borders
     solid.extend(border_elements(state, border_config, scale));
@@ -115,22 +111,6 @@ where
             .ok()
         })
         .collect()
-}
-
-/// Generate cursor placeholder element at current pointer position.
-fn cursor_elements(state: &RwayState, scale: Scale<f64>) -> Vec<SolidColorRenderElement> {
-    if matches!(state.cursor_status, CursorImageStatus::Hidden) {
-        return vec![];
-    }
-
-    let Some(pointer) = state.seat.get_pointer() else {
-        return vec![];
-    };
-
-    vec![crate::cursor::cursor_square_element(
-        pointer.current_location(),
-        scale,
-    )]
 }
 
 /// Generate border elements for all windows mapped in the Space.

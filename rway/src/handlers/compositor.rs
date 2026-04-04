@@ -120,3 +120,6 @@ delegate_shm!(RwayState);
 smithay::delegate_viewporter!(RwayState);
 smithay::delegate_presentation!(RwayState);
 smithay::delegate_single_pixel_buffer!(RwayState);
+impl smithay::wayland::tablet_manager::TabletSeatHandler for RwayState {}
+smithay::delegate_tablet_manager!(RwayState);
+smithay::delegate_cursor_shape!(RwayState);
