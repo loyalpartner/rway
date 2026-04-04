@@ -1,11 +1,12 @@
 // RwayState — rway 合成器的核心状态
 // 持有所有 Smithay 协议状态、平铺引擎、配置、IPC
 
-use std::{collections::HashMap, ffi::OsString, sync::Arc};
+use std::{collections::HashMap, ffi::OsString, sync::Arc, time::Duration};
 
 use smithay::{
     desktop::{layer_map_for_output, PopupManager, Space, Window, WindowSurfaceType},
     input::{pointer::CursorImageStatus, Seat, SeatState},
+    output::Output,
     reexports::{
         calloop::{
             generic::Generic, EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction,
@@ -331,6 +332,32 @@ impl RwayState {
         if let Some((program, args)) = parts.split_first() {
             let _ = std::process::Command::new(program).args(args).spawn();
         }
+    }
+
+    /// Send frame callbacks to all windows and layer surfaces on an output.
+    /// Must be called after render+submit so clients know to draw the next frame.
+    pub fn send_frames(&self, output: &Output) {
+        let frame_time = self.start_time.elapsed();
+        self.space.elements().for_each(|window| {
+            window.send_frame(output, frame_time, Some(Duration::ZERO), |_, _| {
+                Some(output.clone())
+            });
+        });
+        let layer_map = layer_map_for_output(output);
+        for layer in layer_map.layers() {
+            layer.send_frame(output, frame_time, Some(Duration::ZERO), |_, _| {
+                Some(output.clone())
+            });
+        }
+    }
+
+    /// Post-repaint housekeeping: refresh Space, clean up dead windows, flush clients.
+    /// Called after send_frames so all MutexGuards from layer_map are released.
+    pub fn post_repaint(&mut self) {
+        self.space.refresh();
+        self.popups.cleanup();
+        self.cleanup_dead_windows();
+        let _ = self.display_handle.flush_clients();
     }
 
     /// 重新计算平铺布局并更新 Space 中窗口的位置和大小

@@ -7,8 +7,6 @@
 // - The cycle: event_ping → dispatch → ping(render) → render+submit(VSync) → ping(event)
 // - submit() provides VSync throttling (~60fps), idle CPU near zero
 
-use std::time::Duration;
-
 use smithay::{
     backend::{
         renderer::{
@@ -40,7 +38,8 @@ pub(crate) struct WinitState {
 }
 
 impl WinitState {
-    /// Render one frame. Returns true if animations are still running.
+    /// Render one frame: render + submit only.
+    /// Caller is responsible for send_frames() and post_repaint() afterwards.
     pub fn render_frame(&mut self, state: &mut RwayState) -> bool {
         let has_animations = state.update_animations();
         state.needs_redraw = false;
@@ -57,11 +56,9 @@ impl WinitState {
                 return has_animations;
             };
 
-            // Materialize text buffers into GPU-backed render elements
             let text_elements =
                 render::materialize_text_elements(renderer, &overlay.text_buffers, scale);
 
-            // Combine: text on top (title bars), then solid (borders, cursor)
             let mut custom_elements: Vec<WinitOverlayElement> =
                 Vec::with_capacity(overlay.solid.len() + text_elements.len());
             custom_elements.extend(text_elements.into_iter().map(WinitOverlayElement::Text));
@@ -82,34 +79,9 @@ impl WinitState {
             }
         }
 
-        // submit() blocks for VSync — this is what throttles the loop to ~60fps
         if let Err(e) = self.backend.submit(Some(&[damage])) {
             tracing::warn!("Failed to submit winit frame: {:?}", e);
         }
-
-        let output = &self.output;
-        let frame_time = state.start_time.elapsed();
-        state.space.elements().for_each(|window| {
-            window.send_frame(output, frame_time, Some(Duration::ZERO), |_, _| {
-                Some(output.clone())
-            })
-        });
-
-        // Send frame to layer surfaces (waybar etc.) so they render next frame
-        {
-            let layer_map = smithay::desktop::layer_map_for_output(output);
-            for layer in layer_map.layers() {
-                layer.send_frame(output, frame_time, Some(Duration::ZERO), |_, _| {
-                    Some(output.clone())
-                });
-            }
-        }
-
-        state.space.refresh();
-        state.popups.cleanup();
-        state.cleanup_dead_windows();
-
-        let _ = state.display_handle.flush_clients();
 
         has_animations
     }
@@ -180,7 +152,11 @@ pub(crate) fn init_winit(
                 return;
             };
             let has_animations = winit.render_frame(state);
+            // Phase 2: frame callbacks (layer_map guard released by function boundary)
+            state.send_frames(&winit.output);
             state.winit = Some(winit);
+            // Phase 3: cleanup (safe to acquire layer_map lock again)
+            state.post_repaint();
 
             // Continue the cycle: after VSync-throttled render, pump events again
             event_ping_from_render.ping();

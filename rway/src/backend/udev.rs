@@ -504,12 +504,8 @@ pub(crate) fn run_udev() {
     info!("进入主事件循环");
     event_loop
         .run(None, &mut state, move |state| {
-            // 推进动画插值，更新窗口在 Space 中的渲染位置
             state.update_animations();
-            state.space.refresh();
-            state.popups.cleanup();
-            state.cleanup_dead_windows();
-            let _ = state.display_handle.flush_clients();
+            state.post_repaint();
         })
         .expect("udev: event loop terminated with error");
 }
@@ -1122,22 +1118,6 @@ fn render_surface(
 
     let start = Instant::now();
 
-    // 发送帧回调给所有窗口和 layer surfaces（waybar 等）
-    let frame_time = state.start_time.elapsed();
-    state.space.elements().for_each(|window| {
-        window.send_frame(&output, frame_time, Some(Duration::ZERO), |_, _| {
-            Some(output.clone())
-        });
-    });
-    {
-        let layer_map = smithay::desktop::layer_map_for_output(&output);
-        for layer in layer_map.layers() {
-            layer.send_frame(&output, frame_time, Some(Duration::ZERO), |_, _| {
-                Some(output.clone())
-            });
-        }
-    }
-
     // Shared pipeline: generate overlay elements BEFORE borrowing udev_data
     let border_config = BorderConfig::from_config(&state.config);
     let scale = Scale::from(1.0_f64);
@@ -1212,6 +1192,9 @@ fn render_surface(
             true
         }
     };
+
+    // Send frame callbacks after render+submit (guard released by function boundary)
+    state.send_frames(&output);
 
     if reschedule {
         // 如果没有损坏或发生临时错误，在下一帧时间重试
