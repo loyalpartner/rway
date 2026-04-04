@@ -2524,8 +2524,10 @@ impl Tree {
         }
     }
 
-    /// Check whether a window is visible (not hidden behind another tab/stack).
-    /// A window is hidden if it's a non-focused child of any Tabbed/Stacked ancestor.
+    /// Check whether a window is visible.
+    /// A window is hidden if:
+    /// - it's on a non-visible workspace, or
+    /// - it's a non-focused child of a Tabbed/Stacked ancestor.
     pub fn is_visible(&self, window_id: u64) -> bool {
         let Some(node_id) = self.find_node_by_window_id(window_id) else {
             return false;
@@ -2533,18 +2535,25 @@ impl Tree {
         let mut current = node_id;
         while let Some(parent) = self.parent(current) {
             if let Some(node) = self.get(parent) {
-                if let NodeData::Container {
-                    layout,
-                    focused_child,
-                    ..
-                } = &node.data
-                {
-                    if matches!(layout, Layout::Tabbed | Layout::Stacked) {
-                        let children = &node.children;
-                        if children.get(*focused_child) != Some(&current) {
+                match &node.data {
+                    NodeData::Workspace { is_visible, .. } => {
+                        if !is_visible {
                             return false;
                         }
                     }
+                    NodeData::Container {
+                        layout,
+                        focused_child,
+                        ..
+                    } => {
+                        if matches!(layout, Layout::Tabbed | Layout::Stacked) {
+                            let children = &node.children;
+                            if children.get(*focused_child) != Some(&current) {
+                                return false;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             current = parent;

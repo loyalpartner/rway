@@ -1122,15 +1122,21 @@ fn render_surface(
 
     let start = Instant::now();
 
-    // 发送帧回调给所有窗口
+    // 发送帧回调给所有窗口和 layer surfaces（waybar 等）
+    let frame_time = state.start_time.elapsed();
     state.space.elements().for_each(|window| {
-        window.send_frame(
-            &output,
-            state.start_time.elapsed(),
-            Some(Duration::ZERO),
-            |_, _| Some(output.clone()),
-        );
+        window.send_frame(&output, frame_time, Some(Duration::ZERO), |_, _| {
+            Some(output.clone())
+        });
     });
+    {
+        let layer_map = smithay::desktop::layer_map_for_output(&output);
+        for layer in layer_map.layers() {
+            layer.send_frame(&output, frame_time, Some(Duration::ZERO), |_, _| {
+                Some(output.clone())
+            });
+        }
+    }
 
     // Shared pipeline: generate overlay elements BEFORE borrowing udev_data
     let border_config = BorderConfig::from_config(&state.config);
