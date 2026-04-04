@@ -72,11 +72,26 @@ impl CompositorHandler for RwayState {
             drop(layer_map);
 
             let mut layer_map = layer_map_for_output(&output);
-            layer_map.arrange();
+            let changed = layer_map.arrange();
+            if changed {
+                for layer in layer_map.layers() {
+                    if let Some(geo) = layer_map.layer_geometry(layer) {
+                        tracing::info!(
+                            "Layer '{}': geometry=({},{} {}x{}), exclusive_zone={:?}",
+                            layer.namespace(),
+                            geo.loc.x,
+                            geo.loc.y,
+                            geo.size.w,
+                            geo.size.h,
+                            layer.cached_state().exclusive_zone,
+                        );
+                    }
+                }
+            }
         }
 
-        // 6. Schedule redraw — client submitted new content
-        self.schedule_redraw();
+        // 6. Relayout tiled windows (exclusive zone from waybar may have changed)
+        self.relayout();
     }
 }
 
