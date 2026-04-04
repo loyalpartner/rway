@@ -137,7 +137,7 @@ pub(crate) fn init_winit(
     let _global = output.create_global::<RwayState>(&state.display_handle);
     output.change_current_state(
         Some(mode),
-        Some(Transform::Normal),
+        Some(Transform::Flipped180),
         None,
         Some((0, 0).into()),
     );
