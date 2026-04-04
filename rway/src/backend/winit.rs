@@ -146,7 +146,7 @@ pub(crate) fn init_winit(
     state.space.map_output(&output, (0, 0));
 
     let win_size = backend.window_size();
-    state.init_tiling_output(win_size.w, win_size.h);
+    state.init_tiling_output_named("winit", win_size.w, win_size.h);
 
     // Use static damage tracker with Flipped180 for correct OpenGL Y-axis flip,
     // while keeping output state Normal so layer_map calculates correct positions.

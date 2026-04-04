@@ -91,6 +91,9 @@ fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
     tracing::info!("Wayland 套接字：{:?}", state.socket_name);
 
+    // Execute startup commands from config (bar { swaybar_command }, exec)
+    state.run_startup_commands();
+
     // DISPLAY 已在 start_xwayland() 中提前设置，可以立即启动客户端
     spawn_client();
 

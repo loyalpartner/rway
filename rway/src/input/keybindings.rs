@@ -50,24 +50,32 @@ pub(crate) fn execute_action(state: &mut RwayState, action: &Action) {
             update_keyboard_focus(state);
         }
         Action::Workspace(name) => {
-            if !rway_tiling::workspace::switch_workspace(&mut state.tiling, name) {
+            let existed = rway_tiling::workspace::switch_workspace(&mut state.tiling, name);
+            if !existed {
                 if let Some(output_id) = state.output_node {
                     rway_tiling::workspace::add_workspace(&mut state.tiling, output_id, name);
                     rway_tiling::workspace::switch_workspace(&mut state.tiling, name);
+                    crate::ipc::broadcast_workspace_init(state, name);
                 }
             }
             state.relayout();
             update_keyboard_focus(state);
-            crate::ipc::broadcast_workspace_focus(state);
+            crate::ipc::broadcast_workspace_event(state, "focus");
         }
         Action::MoveToWorkspace(name) => {
-            // 如果目标工作区不存在，先创建
+            let is_new = !rway_tiling::workspace::get_workspaces(&state.tiling)
+                .iter()
+                .any(|(_, n, _)| n == name);
             if let Some(output_id) = state.output_node {
                 rway_tiling::workspace::add_workspace(&mut state.tiling, output_id, name);
+            }
+            if is_new {
+                crate::ipc::broadcast_workspace_init(state, name);
             }
             rway_tiling::commands::move_to_workspace(&mut state.tiling, name);
             state.relayout();
             update_keyboard_focus(state);
+            crate::ipc::broadcast_workspace_event(state, "focus");
         }
         Action::FocusParent => {
             rway_tiling::commands::focus_parent(&mut state.tiling);

@@ -494,6 +494,9 @@ pub(crate) fn run_udev() {
     #[cfg(feature = "xwayland")]
     state.start_xwayland();
 
+    // Execute startup commands from config (bar { swaybar_command }, exec)
+    state.run_startup_commands();
+
     // 启动初始客户端
     crate::spawn_client();
 
@@ -834,9 +837,9 @@ fn connector_connected(
         output_name, wl_mode.size.w, wl_mode.size.h, wl_mode.refresh
     );
 
-    // 初始化平铺树中的输出
+    // 初始化平铺树中的输出（名字必须匹配 Wayland output 名称，waybar 靠此过滤 workspace）
     if state.output_node.is_none() {
-        state.init_tiling_output(wl_mode.size.w, wl_mode.size.h);
+        state.init_tiling_output_named(&output_name, wl_mode.size.w, wl_mode.size.h);
     }
 
     // 触发首次渲染

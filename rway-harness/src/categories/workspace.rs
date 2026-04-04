@@ -346,18 +346,22 @@ fn test_workspace_numbering() -> TestStatus {
 fn test_workspace_focused_via_ipc() -> TestStatus {
     let ws = rway_ipc::WorkspaceInfo {
         id: 1,
+        node_type: "workspace".to_string(),
         num: 1,
         name: "1".into(),
         visible: true,
         focused: true,
         urgent: false,
         output: "eDP-1".into(),
+        layout: "splith".to_string(),
+        representation: String::new(),
         rect: rway_ipc::IpcRect {
             x: 0,
             y: 0,
             width: 1920,
             height: 1080,
         },
+        focus: vec![],
     };
     let json = serde_json::to_value(&ws).unwrap();
     if json["focused"] == true {

@@ -1371,6 +1371,7 @@ fn parse_block_line(line: &str, line_no: usize, ctx: &mut BlockContext, config: 
         BlockContext::Bar(ref mut bar) => {
             let (key, value) = split_first(line);
             match key {
+                "swaybar_command" => bar.swaybar_command = Some(value.to_string()),
                 "status_command" => bar.status_command = Some(value.to_string()),
                 "position" => bar.position = Some(value.to_string()),
                 _ => {} // 忽略未知 bar 指令

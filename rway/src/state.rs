@@ -312,6 +312,27 @@ impl RwayState {
         }
     }
 
+    /// Execute startup commands: bar { swaybar_command } and exec directives.
+    pub fn run_startup_commands(&self) {
+        if let Some(bar) = &self.config.bar {
+            if let Some(cmd) = &bar.swaybar_command {
+                tracing::info!("swaybar_command: {}", cmd);
+                Self::spawn_shell_command(cmd);
+            }
+        }
+        for cmd in &self.config.exec {
+            tracing::info!("exec: {}", cmd.command);
+            Self::spawn_shell_command(&cmd.command);
+        }
+    }
+
+    fn spawn_shell_command(cmd: &str) {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if let Some((program, args)) = parts.split_first() {
+            let _ = std::process::Command::new(program).args(args).spawn();
+        }
+    }
+
     /// 重新计算平铺布局并更新 Space 中窗口的位置和大小
     pub fn relayout(&mut self) {
         // 获取输出的非 exclusive 区域（扣除 waybar 等 layer shell 客户端占用的空间）

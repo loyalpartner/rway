@@ -337,6 +337,7 @@ pub struct AssignRule {
 
 #[derive(Debug, Clone, Default)]
 pub struct BarConfig {
+    pub swaybar_command: Option<String>,
     pub status_command: Option<String>,
     pub position: Option<String>,
 }

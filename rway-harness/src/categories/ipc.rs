@@ -387,18 +387,22 @@ fn test_version_info_json_format() -> TestStatus {
 fn test_workspace_info_fields() -> TestStatus {
     let ws = rway_ipc::WorkspaceInfo {
         id: 1,
+        node_type: "workspace".to_string(),
         num: 1,
         name: "1".into(),
         visible: true,
         focused: true,
         urgent: false,
         output: "eDP-1".into(),
+        layout: "splith".to_string(),
+        representation: String::new(),
         rect: rway_ipc::IpcRect {
             x: 0,
             y: 0,
             width: 1920,
             height: 1080,
         },
+        focus: vec![],
     };
     let json = serde_json::to_value(&ws).unwrap();
 
@@ -448,6 +452,10 @@ fn test_tree_node_type_rename() -> TestStatus {
         nodes: vec![],
         floating_nodes: vec![],
         focus: vec![],
+        num: None,
+        output: None,
+        visible: None,
+        representation: None,
         app_id: None,
         window: None,
     };
@@ -495,6 +503,10 @@ fn test_tree_node_nested() -> TestStatus {
         nodes: vec![],
         floating_nodes: vec![],
         focus: vec![],
+        num: None,
+        output: None,
+        visible: None,
+        representation: None,
         app_id: Some("test".into()),
         window: None,
     };
@@ -532,6 +544,10 @@ fn test_tree_node_nested() -> TestStatus {
         nodes: vec![child],
         floating_nodes: vec![],
         focus: vec![2],
+        num: None,
+        output: None,
+        visible: None,
+        representation: None,
         app_id: None,
         window: None,
     };
@@ -660,6 +676,10 @@ fn test_tree_node_optional_skip() -> TestStatus {
         nodes: vec![],
         floating_nodes: vec![],
         focus: vec![],
+        num: None,
+        output: None,
+        visible: None,
+        representation: None,
         app_id: None,
         window: None,
     };

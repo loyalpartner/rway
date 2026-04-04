@@ -195,13 +195,17 @@ mod tests {
     fn make_test_workspace() -> WorkspaceInfo {
         WorkspaceInfo {
             id: 1,
+            node_type: "workspace".to_string(),
             num: 1,
             name: "1".to_string(),
             visible: true,
             focused: true,
             urgent: false,
             output: "HDMI-A-1".to_string(),
+            layout: "splith".to_string(),
+            representation: String::new(),
             rect: make_zero_rect(),
+            focus: vec![],
         }
     }
 
@@ -290,6 +294,10 @@ mod tests {
             nodes: vec![],
             floating_nodes: vec![],
             focus: vec![],
+            num: None,
+            output: None,
+            visible: None,
+            representation: None,
             app_id: Some("Alacritty".to_string()),
             window: None,
         }

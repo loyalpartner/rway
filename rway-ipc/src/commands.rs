@@ -14,16 +14,23 @@ pub struct CommandResult {
 }
 
 /// 工作区信息（对应 sway IPC GetWorkspaces 响应）
+///
+/// Field set matches sway exactly so waybar and other tools parse without issues.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct WorkspaceInfo {
     pub id: i64,
+    #[serde(rename = "type")]
+    pub node_type: String,
     pub num: i32,
     pub name: String,
     pub visible: bool,
     pub focused: bool,
     pub urgent: bool,
     pub output: String,
+    pub layout: String,
+    pub representation: String,
     pub rect: IpcRect,
+    pub focus: Vec<i64>,
 }
 
 /// 输出（显示器）信息（对应 sway IPC GetOutputs 响应）
@@ -79,6 +86,15 @@ pub struct TreeNode {
     pub nodes: Vec<TreeNode>,
     pub floating_nodes: Vec<TreeNode>,
     pub focus: Vec<i64>,
+    // Workspace-specific fields (sway includes these on workspace nodes)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub representation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -173,13 +189,17 @@ mod tests {
     fn test_workspace_info_serialization_field_names() {
         let ws = WorkspaceInfo {
             id: 1,
+            node_type: "workspace".to_string(),
             num: 1,
             name: "1".to_string(),
             visible: true,
             focused: true,
             urgent: false,
             output: "HDMI-A-1".to_string(),
+            layout: "splith".to_string(),
+            representation: String::new(),
             rect: make_test_rect(),
+            focus: vec![],
         };
         let json = to_value(&ws).unwrap();
 
@@ -199,18 +219,22 @@ mod tests {
     fn test_workspace_info_serialization_values() {
         let ws = WorkspaceInfo {
             id: 42,
+            node_type: "workspace".to_string(),
             num: 3,
             name: "代码".to_string(),
             visible: false,
             focused: false,
             urgent: true,
             output: "DP-1".to_string(),
+            layout: "splith".to_string(),
+            representation: String::new(),
             rect: IpcRect {
                 x: 1920,
                 y: 0,
                 width: 2560,
                 height: 1440,
             },
+            focus: vec![],
         };
         let json = to_value(&ws).unwrap();
 
@@ -380,6 +404,10 @@ mod tests {
             nodes: vec![],
             floating_nodes: vec![],
             focus: vec![],
+            num: None,
+            output: None,
+            visible: None,
+            representation: None,
             app_id: None,
             window: None,
         };
@@ -408,6 +436,10 @@ mod tests {
             nodes: vec![],
             floating_nodes: vec![],
             focus: vec![],
+            num: None,
+            output: None,
+            visible: None,
+            representation: None,
             app_id: None,
             window: None,
         };
@@ -439,6 +471,10 @@ mod tests {
             nodes: vec![],
             floating_nodes: vec![],
             focus: vec![],
+            num: None,
+            output: None,
+            visible: None,
+            representation: None,
             app_id: Some("Alacritty".to_string()),
             window: None,
         };
@@ -457,6 +493,10 @@ mod tests {
             nodes: vec![child],
             floating_nodes: vec![],
             focus: vec![2],
+            num: None,
+            output: None,
+            visible: None,
+            representation: None,
             app_id: None,
             window: None,
         };
@@ -490,6 +530,10 @@ mod tests {
             nodes: vec![],
             floating_nodes: vec![],
             focus: vec![],
+            num: None,
+            output: None,
+            visible: None,
+            representation: None,
             app_id: None,
             window: Some(123456),
         };

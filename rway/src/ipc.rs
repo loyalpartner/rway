@@ -125,13 +125,19 @@ fn accept_ipc_connections(state: &mut RwayState) {
         let mut header_buf = [0u8; HEADER_SIZE];
         match (&stream).read_exact(&mut header_buf) {
             Ok(()) => {
-                // Data ready — process immediately (no event loop delay)
+                // Data ready — process first batch synchronously, then keep
+                // the connection alive via calloop for subsequent commands
+                // (waybar reuses the same fd for multiple sendCmd calls).
                 let mut stream = stream;
                 stream.set_nonblocking(false).ok();
                 stream
                     .set_read_timeout(Some(std::time::Duration::from_millis(100)))
                     .ok();
-                process_client_with_header(&mut stream, &header_buf, state);
+                let subs = process_client_with_header(&mut stream, &header_buf, state);
+                let subs_vec: Vec<SubscriptionType> = subs.into_iter().collect();
+                if let Err(e) = register_subscriber(state, stream, subs_vec) {
+                    tracing::warn!("IPC: failed to keep connection alive: {}", e);
+                }
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 // Data not ready yet — register calloop fd source for async read
@@ -177,11 +183,12 @@ fn register_pending_client(state: &mut RwayState, stream: UnixStream) -> std::io
 
 /// Process messages on a stream starting with an already-read header.
 /// Loops to handle multiple messages (waybar sends 2 subscribes on one fd).
+/// Returns collected subscriptions so the caller can keep the connection alive.
 fn process_client_with_header(
     stream: &mut UnixStream,
     first_header: &[u8; HEADER_SIZE],
     state: &mut RwayState,
-) {
+) -> HashSet<SubscriptionType> {
     let mut all_subs: HashSet<SubscriptionType> = HashSet::new();
     let mut header_buf = *first_header;
     let mut first = true;
@@ -224,14 +231,7 @@ fn process_client_with_header(
         }
     }
 
-    if !all_subs.is_empty() {
-        if let Ok(cloned) = stream.try_clone() {
-            let subs_vec: Vec<SubscriptionType> = all_subs.into_iter().collect();
-            if let Err(e) = register_subscriber(state, cloned, subs_vec) {
-                tracing::warn!("IPC: failed to register subscriber: {}", e);
-            }
-        }
-    }
+    all_subs
 }
 
 /// Register a subscribed client for event delivery via calloop fd source.
@@ -366,33 +366,57 @@ pub(crate) fn broadcast_event(state: &mut RwayState, event_type: EventType, payl
     }
 }
 
-/// Broadcast workspace focus event.
-pub(crate) fn broadcast_workspace_focus(state: &mut RwayState) {
+/// Build WorkspaceInfo for the currently focused workspace.
+fn focused_workspace_info(state: &RwayState) -> Option<WorkspaceInfo> {
+    let workspaces = rway_tiling::workspace::get_workspaces(&state.tiling);
+    workspaces
+        .iter()
+        .find(|(_, _, vis)| *vis)
+        .map(|(_, name, _)| workspace_info(state, name))
+}
+
+/// Build WorkspaceInfo by name.
+fn workspace_info(state: &RwayState, name: &str) -> WorkspaceInfo {
+    let rect = output_rect(state);
+    WorkspaceInfo {
+        id: 1,
+        node_type: "workspace".to_string(),
+        num: name.parse::<i32>().unwrap_or(1),
+        name: name.to_string(),
+        visible: true,
+        focused: true,
+        urgent: false,
+        output: output_name(state),
+        layout: "splith".to_string(),
+        representation: String::new(),
+        rect,
+        focus: vec![],
+    }
+}
+
+/// Broadcast a workspace event with the given change type.
+pub(crate) fn broadcast_workspace_event(state: &mut RwayState, change: &str) {
     if state.ipc_clients.is_empty() {
         return;
     }
-
-    let workspaces = rway_tiling::workspace::get_workspaces(&state.tiling);
-    let current = workspaces
-        .iter()
-        .find(|(_, _, vis)| *vis)
-        .map(|(_, name, _)| {
-            let rect = output_rect(state);
-            WorkspaceInfo {
-                id: 1,
-                num: name.parse::<i32>().unwrap_or(1),
-                name: name.clone(),
-                visible: true,
-                focused: true,
-                urgent: false,
-                output: "winit".to_string(),
-                rect,
-            }
-        });
-
+    let current = focused_workspace_info(state);
     let event = rway_ipc::WorkspaceEvent {
-        change: "focus".to_string(),
+        change: change.to_string(),
         current,
+        old: None,
+    };
+    let payload = serde_json::to_vec(&event).unwrap_or_default();
+    broadcast_event(state, EventType::Workspace, &payload);
+}
+
+/// Broadcast workspace "init" event for a newly created workspace.
+pub(crate) fn broadcast_workspace_init(state: &mut RwayState, name: &str) {
+    if state.ipc_clients.is_empty() {
+        return;
+    }
+    let event = rway_ipc::WorkspaceEvent {
+        change: "init".to_string(),
+        current: Some(workspace_info(state, name)),
         old: None,
     };
     let payload = serde_json::to_vec(&event).unwrap_or_default();
@@ -420,6 +444,10 @@ pub(crate) fn broadcast_window_event(state: &mut RwayState, change: &str) {
         nodes: vec![],
         floating_nodes: vec![],
         focus: vec![],
+        num: None,
+        output: None,
+        visible: None,
+        representation: None,
         app_id: None,
         window: None,
     };
@@ -456,18 +484,23 @@ fn handle_run_command(payload: &[u8]) -> serde_json::Value {
 
 fn handle_get_workspaces(state: &RwayState) -> serde_json::Value {
     let workspaces = rway_tiling::workspace::get_workspaces(&state.tiling);
+    let rect = output_rect(state);
     let ws_list: Vec<WorkspaceInfo> = workspaces
         .iter()
         .enumerate()
         .map(|(i, (_, name, visible))| WorkspaceInfo {
             id: i as i64 + 1,
+            node_type: "workspace".to_string(),
             num: name.parse::<i32>().unwrap_or(i as i32 + 1),
             name: name.clone(),
             visible: *visible,
             focused: *visible,
             urgent: false,
-            output: "winit".to_string(),
-            rect: output_rect(state),
+            output: output_name(state),
+            layout: "splith".to_string(),
+            representation: String::new(),
+            rect: rect.clone(),
+            focus: vec![],
         })
         .collect();
     serde_json::to_value(&ws_list).unwrap_or(serde_json::json!([]))
@@ -482,9 +515,9 @@ fn handle_get_outputs(state: &RwayState) -> serde_json::Value {
 
     let outputs = vec![OutputInfo {
         id: 0,
-        name: "winit".to_string(),
+        name: output_name(state),
         make: "Smithay".to_string(),
-        model: "Winit".to_string(),
+        model: "rway".to_string(),
         serial: "Unknown".to_string(),
         active: true,
         primary: true,
@@ -519,6 +552,15 @@ fn handle_get_version() -> serde_json::Value {
 }
 
 // ── Helpers ──────────────────────────────────────────────────
+
+fn output_name(state: &RwayState) -> String {
+    state
+        .space
+        .outputs()
+        .next()
+        .map(|o| o.name())
+        .unwrap_or_else(|| "unknown".to_string())
+}
 
 fn output_rect(state: &RwayState) -> IpcRect {
     state
@@ -558,8 +600,9 @@ fn build_tree_node(
         return empty_tree_node(node_id);
     };
 
-    let (node_type, layout, name, rect) = match &node.data {
-        rway_tiling::NodeData::Root => ("root", "splith", None, parent_rect.clone()),
+    // Extract per-type info: (node_type, layout, name, rect, ws_visible, ws_output)
+    let (node_type, layout, name, rect, ws_visible, ws_output) = match &node.data {
+        rway_tiling::NodeData::Root => ("root", "splith", None, parent_rect.clone(), None, None),
         rway_tiling::NodeData::Output { name, geometry } => (
             "output",
             "output",
@@ -570,12 +613,18 @@ fn build_tree_node(
                 width: geometry.width,
                 height: geometry.height,
             },
+            None,
+            None,
         ),
-        rway_tiling::NodeData::Workspace { name, .. } => (
+        rway_tiling::NodeData::Workspace {
+            name, is_visible, ..
+        } => (
             "workspace",
             "splith",
             Some(name.clone()),
             parent_rect.clone(),
+            Some(*is_visible),
+            Some(output_name(state)),
         ),
         rway_tiling::NodeData::Container { layout, .. } => (
             "con",
@@ -587,6 +636,8 @@ fn build_tree_node(
             },
             None,
             parent_rect.clone(),
+            None,
+            None,
         ),
         rway_tiling::NodeData::Window { geometry, .. } => (
             "con",
@@ -598,7 +649,17 @@ fn build_tree_node(
                 width: geometry.width,
                 height: geometry.height,
             },
+            None,
+            None,
         ),
+    };
+
+    let is_workspace = node_type == "workspace";
+    let ws_focused = ws_visible.unwrap_or(false);
+    let ws_num = if is_workspace {
+        name.as_ref().and_then(|n| n.parse::<i32>().ok())
+    } else {
+        None
     };
 
     let children: Vec<rway_tiling::NodeId> = state.tiling.children(node_id).to_vec();
@@ -613,7 +674,7 @@ fn build_tree_node(
         name,
         node_type: node_type.to_string(),
         layout: layout.to_string(),
-        focused: false,
+        focused: ws_focused,
         urgent: false,
         rect,
         window_rect: zero_rect(),
@@ -622,6 +683,14 @@ fn build_tree_node(
         nodes: child_nodes,
         floating_nodes: vec![],
         focus,
+        num: ws_num,
+        output: ws_output,
+        visible: ws_visible,
+        representation: if is_workspace {
+            Some(String::new())
+        } else {
+            None
+        },
         app_id: None,
         window: None,
     }
@@ -642,6 +711,10 @@ fn empty_tree_node(node_id: rway_tiling::NodeId) -> TreeNode {
         nodes: vec![],
         floating_nodes: vec![],
         focus: vec![],
+        num: None,
+        output: None,
+        visible: None,
+        representation: None,
         app_id: None,
         window: None,
     }
