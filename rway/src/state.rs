@@ -115,7 +115,7 @@ pub struct RwayState {
 
     // IPC
     pub(crate) ipc_server: Option<rway_ipc::IpcServer>,
-    pub(crate) ipc_subscribers: Vec<crate::ipc::IpcSubscriber>,
+    pub(crate) ipc_clients: Vec<crate::ipc::IpcClient>,
 
     // XWayland support (only used when xwayland feature is enabled)
     #[cfg(feature = "xwayland")]
@@ -254,7 +254,7 @@ impl RwayState {
             winit: None,
             render_ping: None,
             ipc_server,
-            ipc_subscribers: Vec::new(),
+            ipc_clients: Vec::new(),
 
             #[cfg(feature = "xwayland")]
             xwayland_shell_state: None,

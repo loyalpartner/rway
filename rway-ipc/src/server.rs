@@ -3,6 +3,7 @@
 // 负责创建和管理 Unix domain socket，提供 Sway 兼容的 IPC 连接点。
 // calloop 集成将在 Sprint 2 完成；本模块聚焦于 socket 生命周期管理。
 
+use std::os::fd::{AsFd, BorrowedFd};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 
@@ -52,6 +53,12 @@ impl IpcServer {
             Ok((stream, _)) => Some(stream),
             Err(_) => None,
         }
+    }
+}
+
+impl AsFd for IpcServer {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.listener.as_fd()
     }
 }
 
