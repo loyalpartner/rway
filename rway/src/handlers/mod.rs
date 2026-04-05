@@ -5,6 +5,7 @@ pub mod decoration;
 pub mod input_method;
 pub mod layer_shell;
 pub mod output;
+pub mod screencopy;
 pub mod xdg_shell;
 #[cfg(feature = "xwayland")]
 pub mod xwayland;

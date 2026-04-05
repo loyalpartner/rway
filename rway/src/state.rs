@@ -127,6 +127,9 @@ pub struct RwayState {
     #[cfg(feature = "xwayland")]
     pub(crate) xdisplay: Option<u32>,
 
+    // Screencopy: pending copy requests awaiting next render
+    pub(crate) pending_screencopies: Vec<crate::handlers::screencopy::PendingScreencopy>,
+
     // Udev backend data (only used when udev feature is enabled)
     #[cfg(feature = "udev")]
     pub(crate) udev_data: Option<crate::backend::udev::UdevData>,
@@ -162,6 +165,9 @@ impl RwayState {
 
         // Layer Shell 协议（waybar、swaybg 等使用）
         let layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
+
+        // Screencopy protocol (grim, wl-screenrec etc.)
+        crate::handlers::screencopy::init_screencopy(&dh);
 
         // XDG Decoration 协议（告知客户端由合成器处理装饰）
         let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
@@ -277,6 +283,8 @@ impl RwayState {
             xwm: None,
             #[cfg(feature = "xwayland")]
             xdisplay: None,
+
+            pending_screencopies: Vec::new(),
 
             #[cfg(feature = "udev")]
             udev_data: None,
@@ -842,18 +850,79 @@ impl RwayState {
         socket_name
     }
 
-    /// 在给定逻辑坐标 `pos` 下，找到对应的 WlSurface 及其相对坐标
+    /// Find the WlSurface under the given logical position.
+    ///
+    /// Checks in z-order: Overlay layers > Top layers > windows > Bottom > Background.
+    /// This ensures that layer-shell clients like slurp (Overlay) receive pointer events.
     pub fn surface_under(
         &self,
         pos: Point<f64, Logical>,
     ) -> Option<(WlSurface, Point<f64, Logical>)> {
-        self.space
+        use smithay::desktop::layer_map_for_output;
+        use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
+
+        // Check layer surfaces above windows (Overlay, then Top)
+        if let Some(output) = self.space.outputs().next() {
+            let layer_map = layer_map_for_output(output);
+            let output_geo = self.space.output_geometry(output).unwrap_or_default();
+
+            for layer in &[WlrLayer::Overlay, WlrLayer::Top] {
+                if let Some(layer_surface) = layer_map.layer_under(*layer, pos) {
+                    let layer_loc = layer_map
+                        .layer_geometry(layer_surface)
+                        .map(|g| g.loc)
+                        .unwrap_or_default();
+                    let relative = pos - (output_geo.loc + layer_loc).to_f64();
+                    if let Some((surface, surface_loc)) =
+                        layer_surface.surface_under(relative, WindowSurfaceType::ALL)
+                    {
+                        return Some((
+                            surface,
+                            (surface_loc + output_geo.loc + layer_loc).to_f64(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Check windows
+        if let Some(result) = self
+            .space
             .element_under(pos)
             .and_then(|(window, location)| {
                 window
                     .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
                     .map(|(s, p)| (s, (p + location).to_f64()))
             })
+        {
+            return Some(result);
+        }
+
+        // Check layer surfaces below windows (Bottom, then Background)
+        if let Some(output) = self.space.outputs().next() {
+            let layer_map = layer_map_for_output(output);
+            let output_geo = self.space.output_geometry(output).unwrap_or_default();
+
+            for layer in &[WlrLayer::Bottom, WlrLayer::Background] {
+                if let Some(layer_surface) = layer_map.layer_under(*layer, pos) {
+                    let layer_loc = layer_map
+                        .layer_geometry(layer_surface)
+                        .map(|g| g.loc)
+                        .unwrap_or_default();
+                    let relative = pos - (output_geo.loc + layer_loc).to_f64();
+                    if let Some((surface, surface_loc)) =
+                        layer_surface.surface_under(relative, WindowSurfaceType::ALL)
+                    {
+                        return Some((
+                            surface,
+                            (surface_loc + output_geo.loc + layer_loc).to_f64(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        None
     }
 }
 

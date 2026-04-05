@@ -5,8 +5,12 @@ use smithay::{
     desktop::{layer_map_for_output, LayerSurface},
     output::Output,
     reexports::wayland_server::protocol::wl_output,
-    wayland::shell::wlr_layer::{
-        Layer, LayerSurface as WlrLayerSurface, WlrLayerShellHandler, WlrLayerShellState,
+    wayland::{
+        compositor::with_states,
+        shell::wlr_layer::{
+            KeyboardInteractivity, Layer, LayerSurface as WlrLayerSurface, LayerSurfaceCachedState,
+            WlrLayerShellHandler, WlrLayerShellState,
+        },
     },
 };
 
@@ -45,8 +49,25 @@ impl WlrLayerShellHandler for RwayState {
         layer_map.arrange();
         drop(layer_map);
 
+        // If the layer surface requests exclusive keyboard focus (e.g. slurp),
+        // give it keyboard focus so it can receive key/pointer events.
+        let wants_keyboard = with_states(layer_surface.wl_surface(), |states| {
+            states
+                .cached_state
+                .get::<LayerSurfaceCachedState>()
+                .current()
+                .keyboard_interactivity
+        });
+        if wants_keyboard != KeyboardInteractivity::None {
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            if let Some(keyboard) = self.seat.get_keyboard() {
+                keyboard.set_focus(self, Some(layer_surface.wl_surface().clone()), serial);
+            }
+        }
+
         // 重新布局（exclusive zone 可能变化）
         self.relayout();
+        self.schedule_redraw();
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {

@@ -1214,6 +1214,15 @@ fn render_surface(
     // Send frame callbacks after render+submit (guard released by function boundary)
     state.send_frames(&output);
 
+    // Screencopy: offscreen render for pending requests on this output
+    if state
+        .pending_screencopies
+        .iter()
+        .any(|p| p.output == output)
+    {
+        render_screencopy_udev(state, node, &output);
+    }
+
     if reschedule {
         // 如果没有损坏或发生临时错误，在下一帧时间重试
         let output_refresh = match output.current_mode() {
@@ -1235,4 +1244,96 @@ fn render_surface(
         let elapsed = start.elapsed();
         trace!("渲染完成，耗时 {:?}", elapsed);
     }
+}
+
+/// Offscreen render + pixel readback for screencopy on a udev output.
+fn render_screencopy_udev(state: &mut RwayState, _node: DrmNode, output: &Output) {
+    use crate::handlers::screencopy::{fail_all_for_output, fulfill_screencopy, CapturedFrame};
+    use smithay::backend::allocator::Fourcc;
+    use smithay::backend::renderer::{
+        damage::OutputDamageTracker,
+        gles::{GlesRenderer, GlesTexture},
+        Bind, ExportMem, Offscreen,
+    };
+
+    let Some(mode) = output.current_mode() else {
+        fail_all_for_output(&mut state.pending_screencopies, output);
+        return;
+    };
+    let size = mode.size;
+
+    // Get renderer from GPU manager
+    let udev = state.udev_data.as_mut().expect("udev backend initialized");
+    let primary_gpu = udev.primary_gpu;
+
+    let mut renderer = match udev.gpus.single_renderer(&primary_gpu) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("screencopy: failed to get renderer: {:?}", e);
+            fail_all_for_output(&mut state.pending_screencopies, output);
+            return;
+        }
+    };
+
+    // Downcast to GlesRenderer for offscreen operations
+    let gles: &mut GlesRenderer = renderer.as_mut();
+
+    // Create offscreen texture
+    let buf_size: smithay::utils::Size<i32, smithay::utils::Buffer> = (size.w, size.h).into();
+    let Ok(mut offscreen) =
+        <GlesRenderer as Offscreen<GlesTexture>>::create_buffer(gles, Fourcc::Abgr8888, buf_size)
+    else {
+        warn!("screencopy: failed to create offscreen texture");
+        fail_all_for_output(&mut state.pending_screencopies, output);
+        return;
+    };
+    let Ok(mut offscreen_fb) = gles.bind(&mut offscreen) else {
+        warn!("screencopy: failed to bind offscreen texture");
+        fail_all_for_output(&mut state.pending_screencopies, output);
+        return;
+    };
+
+    // Render scene to offscreen using render_output (auto-includes layer surfaces)
+    use smithay::backend::renderer::element::solid::SolidColorRenderElement;
+    use smithay::utils::Rectangle;
+
+    let mut damage_tracker =
+        OutputDamageTracker::new(size, 1.0, smithay::utils::Transform::Flipped180);
+    if let Err(e) = smithay::desktop::space::render_output::<_, SolidColorRenderElement, _, _>(
+        output,
+        gles,
+        &mut offscreen_fb,
+        1.0,
+        0,
+        [&state.space],
+        &[],
+        &mut damage_tracker,
+        render::CLEAR_COLOR,
+    ) {
+        warn!("screencopy: offscreen render failed: {:?}", e);
+        fail_all_for_output(&mut state.pending_screencopies, output);
+        return;
+    }
+
+    // Read pixels
+    let region = Rectangle::new((0, 0).into(), (size.w, size.h).into());
+    let Ok(mapping) = gles.copy_framebuffer(&offscreen_fb, region, Fourcc::Abgr8888) else {
+        warn!("screencopy: copy_framebuffer failed");
+        fail_all_for_output(&mut state.pending_screencopies, output);
+        return;
+    };
+    let Ok(src_data) = gles.map_texture(&mapping) else {
+        warn!("screencopy: map_texture failed");
+        fail_all_for_output(&mut state.pending_screencopies, output);
+        return;
+    };
+
+    let captured = CapturedFrame {
+        data: src_data.to_vec(),
+        stride: size.w as usize * 4,
+        height: size.h as usize,
+        flipped: true,
+    };
+
+    fulfill_screencopy(state, &captured, output);
 }

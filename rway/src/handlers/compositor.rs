@@ -102,6 +102,9 @@ impl CompositorHandler for RwayState {
 
         // 6. Relayout tiled windows (exclusive zone from waybar may have changed)
         self.relayout();
+
+        // 7. Trigger redraw so the new content is displayed
+        self.schedule_redraw();
     }
 }
 

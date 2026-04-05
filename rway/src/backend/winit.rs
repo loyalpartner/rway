@@ -98,11 +98,112 @@ impl WinitState {
             }
         }
 
+        // submit() must happen with clean GL state — no readback before this point
         if let Err(e) = self.backend.submit(Some(&[damage])) {
             tracing::warn!("Failed to submit winit frame: {:?}", e);
         }
 
+        // Screencopy: separate offscreen render pass AFTER submit
+        // Winit's EGL surface breaks if we do GL readback before swap, so we
+        // re-render the scene to an offscreen buffer and read from that instead.
+        if state
+            .pending_screencopies
+            .iter()
+            .any(|p| p.output == self.output)
+        {
+            self.render_screencopy(state);
+        }
+
         has_animations
+    }
+
+    /// Render scene to an offscreen buffer and fulfill pending screencopy requests.
+    fn render_screencopy(&mut self, state: &mut RwayState) {
+        use crate::handlers::screencopy::{fail_all_for_output, fulfill_screencopy, CapturedFrame};
+        use smithay::backend::allocator::Fourcc;
+        use smithay::backend::renderer::{
+            damage::OutputDamageTracker, gles::GlesTexture, Bind, ExportMem, Offscreen,
+        };
+
+        let Some(mode) = self.output.current_mode() else {
+            fail_all_for_output(&mut state.pending_screencopies, &self.output);
+            return;
+        };
+        let size = mode.size;
+
+        let Ok((renderer, _swapchain)) = self.backend.bind() else {
+            fail_all_for_output(&mut state.pending_screencopies, &self.output);
+            return;
+        };
+
+        // Use GlesTexture (always available, no Renderbuffer capability needed)
+        let buf_size: smithay::utils::Size<i32, smithay::utils::Buffer> = (size.w, size.h).into();
+        let Ok(mut offscreen) = <GlesRenderer as Offscreen<GlesTexture>>::create_buffer(
+            renderer,
+            Fourcc::Abgr8888,
+            buf_size,
+        ) else {
+            tracing::warn!("screencopy: failed to create offscreen texture");
+            fail_all_for_output(&mut state.pending_screencopies, &self.output);
+            return;
+        };
+        let Ok(mut offscreen_fb) = renderer.bind(&mut offscreen) else {
+            tracing::warn!("screencopy: failed to bind offscreen texture");
+            fail_all_for_output(&mut state.pending_screencopies, &self.output);
+            return;
+        };
+
+        // Re-render scene to offscreen buffer
+        let scale = Scale::from(1.0_f64);
+        let overlay = render::overlay_elements(state, scale, &self.border_config);
+        let text_elements =
+            render::materialize_text_elements(renderer, &overlay.text_buffers, scale);
+
+        let mut custom_elements: Vec<WinitOverlayElement> =
+            Vec::with_capacity(overlay.solid.len() + text_elements.len());
+        custom_elements.extend(text_elements.into_iter().map(WinitOverlayElement::Text));
+        custom_elements.extend(overlay.solid.into_iter().map(WinitOverlayElement::Solid));
+
+        let mut damage_tracker =
+            OutputDamageTracker::new(size, 1.0, smithay::utils::Transform::Flipped180);
+        if let Err(e) = smithay::desktop::space::render_output::<_, WinitOverlayElement, _, _>(
+            &self.output,
+            renderer,
+            &mut offscreen_fb,
+            1.0,
+            0,
+            [&state.space],
+            &custom_elements,
+            &mut damage_tracker,
+            render::CLEAR_COLOR,
+        ) {
+            tracing::warn!("screencopy: offscreen render failed: {:?}", e);
+            fail_all_for_output(&mut state.pending_screencopies, &self.output);
+            return;
+        }
+
+        // Read pixels from offscreen (no EGL surface involved)
+        let region = Rectangle::new((0, 0).into(), (size.w, size.h).into());
+        let Ok(mapping) = renderer.copy_framebuffer(&offscreen_fb, region, Fourcc::Abgr8888) else {
+            tracing::warn!("screencopy: copy_framebuffer failed");
+            fail_all_for_output(&mut state.pending_screencopies, &self.output);
+            return;
+        };
+        let Ok(src_data) = renderer.map_texture(&mapping) else {
+            tracing::warn!("screencopy: map_texture failed");
+            fail_all_for_output(&mut state.pending_screencopies, &self.output);
+            return;
+        };
+
+        let captured = CapturedFrame {
+            data: src_data.to_vec(),
+            stride: size.w as usize * 4,
+            height: size.h as usize,
+            flipped: true,
+        };
+
+        // Copy to SHM buffers
+        fulfill_screencopy(state, &captured, &self.output);
     }
 }
 

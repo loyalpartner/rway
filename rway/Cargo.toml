@@ -12,6 +12,7 @@ rway-config = { path = "../rway-config" }
 rway-ipc = { path = "../rway-ipc" }
 
 cosmic-text = "0.12"
+wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 serde_json = "1"
 thiserror = "1"
 tracing = { version = "0.1", features = ["max_level_trace", "release_max_level_debug"] }
